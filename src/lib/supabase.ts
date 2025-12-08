@@ -4,8 +4,8 @@ import { createClient } from '@supabase/supabase-js';
 // VITE_SUPABASE_URL=...
 // VITE_SUPABASE_KEY=...
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-const supabaseKey = import.meta.env.VITE_SUPABASE_KEY;
+const supabaseUrl = (import.meta as any).env.VITE_SUPABASE_URL;
+const supabaseKey = (import.meta as any).env.VITE_SUPABASE_KEY;
 
 if (!supabaseUrl || !supabaseKey) {
   console.error('Missing Supabase URL or Key in environment variables');

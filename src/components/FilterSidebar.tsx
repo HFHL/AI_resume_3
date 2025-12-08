@@ -1,5 +1,5 @@
 import React from 'react';
-import { Filter, Search } from 'lucide-react';
+import { Filter } from 'lucide-react';
 import { FilterSection } from './FilterSection';
 import { AVAILABLE_TAGS } from '../data/mockData';
 import { FilterState } from '../types';

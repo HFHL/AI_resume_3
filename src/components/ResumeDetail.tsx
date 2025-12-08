@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { 
   ArrowLeft, Download, MoreHorizontal, Edit3, Mail, Phone, MapPin, 
-  Linkedin, Calendar, Building2, GraduationCap, Briefcase, ExternalLink, 
+  Calendar, Building2, GraduationCap, Briefcase, ExternalLink, 
   FileText, Loader2
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';

@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { UploadCloud, Clock, FileText, CheckCircle, Loader2, AlertCircle, RefreshCw, Eye, User as UserIcon } from 'lucide-react';
+import { UploadCloud, Clock, FileText, CheckCircle, Loader2, AlertCircle, RefreshCw, Eye } from 'lucide-react';
 import { Upload } from '../types';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';

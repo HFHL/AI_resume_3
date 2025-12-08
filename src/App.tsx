@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { Star, ChevronDown, User, UploadCloud, LogOut, Loader2 } from 'lucide-react';
 import { FilterSidebar } from './components/FilterSidebar';
 import { ResumeList } from './components/ResumeList';
