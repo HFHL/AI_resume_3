@@ -1,0 +1,263 @@
+import React, { useState, useMemo, useEffect } from 'react';
+import { Star, ChevronDown, User, UploadCloud, LogOut, Loader2 } from 'lucide-react';
+import { FilterSidebar } from './components/FilterSidebar';
+import { ResumeList } from './components/ResumeList';
+import { ResumeDetail } from './components/ResumeDetail';
+import { JobList } from './components/JobList';
+import { UploadCenter } from './components/UploadCenter';
+import { UserProfile } from './components/UserProfile';
+import { Login } from './components/Login';
+import { useAuth } from './context/AuthContext';
+// import { MOCK_CANDIDATES } from './data/mockData'; // MOCK DATA NO LONGER USED
+import { FilterState, Candidate } from './types';
+import { supabase } from './lib/supabase';
+
+const ResumeApp = () => {
+  const { user, loading: authLoading, signOut } = useAuth();
+  
+  const [activeTab, setActiveTab] = useState<string>('resumes'); // 'resumes', 'jobs', 'upload', 'profile'
+  const [selectedCandidateId, setSelectedCandidateId] = useState<string | null>(null);
+  const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
+  
+  // Real Data State
+  const [candidates, setCandidates] = useState<Candidate[]>([]);
+  const [loading, setLoading] = useState<boolean>(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Resume List State
+  const [filters, setFilters] = useState<FilterState>({
+    search: '', degrees: [], schoolTags: [], minYears: '', companyTypes: [], tags: [], special: []
+  });
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+
+  // Fetch candidates from Supabase
+  useEffect(() => {
+    if (!user) return;
+
+    const fetchCandidates = async () => {
+      setLoading(true);
+      try {
+        const { data, error } = await supabase
+          .from('candidates')
+          .select(`
+            *,
+            candidate_educations (school, degree, major, school_tags),
+            candidate_work_experiences (company, role, start_date, end_date),
+            candidate_tags (
+              tags (tag_name, category)
+            )
+          `);
+
+        if (error) throw error;
+
+        // Transform Supabase data to frontend Candidate interface
+        const formattedData: Candidate[] = (data || []).map((item: any) => {
+          // Get latest work experience for title and company
+          const works = item.candidate_work_experiences || [];
+          const latestWork = works.length > 0 ? works[0] : null; // Assuming order or just taking first found
+          
+          // Get highest/first education
+          const edus = item.candidate_educations || [];
+          const mainEdu = edus.length > 0 ? edus[0] : null;
+
+          // Extract tags
+          const tags = (item.candidate_tags || []).map((t: any) => t.tags?.tag_name).filter(Boolean);
+
+          return {
+            id: item.id,
+            name: item.name || 'Unknown',
+            avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${item.id}`, // Generate avatar based on ID
+            title: latestWork?.role || '待定职位',
+            work_years: item.work_years || 0,
+            degree: item.degree_level || mainEdu?.degree || '未知',
+            phone: item.phone,
+            email: item.email,
+            school: {
+              name: mainEdu?.school || '未填写',
+              tags: mainEdu?.school_tags || []
+            },
+            company: latestWork?.company || '未填写',
+            company_tags: [], // DB doesn't have company tags yet, leave empty or infer
+            is_outsourcing: false, // DB doesn't have this field on candidate level easily available without logic
+            location: item.location || '未知',
+            skills: tags,
+            match_score: Math.floor(Math.random() * 40) + 60, // Random score for demo
+            last_active: new Date(item.updated_at).toLocaleDateString()
+          };
+        });
+
+        setCandidates(formattedData);
+      } catch (err: any) {
+        console.error('Error fetching candidates:', err);
+        setError(err.message);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchCandidates();
+  }, [user]);
+
+  const filteredCandidates = useMemo(() => {
+    return candidates.filter(c => {
+      if (filters.search) {
+        const q = filters.search.toLowerCase();
+        if (!(c.name.toLowerCase().includes(q) || c.skills.some(s => s.toLowerCase().includes(q)) || c.company.toLowerCase().includes(q))) return false;
+      }
+      if (filters.degrees.length > 0 && !filters.degrees.includes(c.degree)) return false;
+      if (filters.schoolTags.length > 0 && !c.school.tags.some(t => filters.schoolTags.includes(t))) return false;
+      if (filters.minYears && c.work_years < parseInt(filters.minYears)) return false;
+      if (filters.companyTypes.length > 0 && !c.company_tags.some(t => filters.companyTypes.includes(t))) return false;
+      if (filters.tags.length > 0 && !c.skills.some(s => filters.tags.includes(s))) return false;
+      if (filters.special.includes('outsourcing') && !c.is_outsourcing) return false;
+      if (filters.special.includes('noPhone') && c.phone !== null) return false;
+      return true;
+    });
+  }, [filters, candidates]);
+
+  const handleResetFilters = () => {
+    setFilters({search:'', degrees:[], schoolTags:[], minYears:'', companyTypes:[], tags: [], special:[]}); 
+    setSelectedIds([]);
+  };
+
+  const handleCandidateClick = (id: string) => {
+    setSelectedCandidateId(id);
+  };
+
+  const handleBackToResumeList = () => {
+    setSelectedCandidateId(null);
+  };
+
+  const handleSignOut = async () => {
+    await signOut();
+    setIsUserMenuOpen(false);
+  };
+
+  if (authLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <Loader2 size={48} className="animate-spin text-indigo-500" />
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <Login />;
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-50 font-sans text-gray-800 flex flex-col h-screen">
+      {!selectedCandidateId && (
+        <header className="bg-white border-b border-gray-200 sticky top-0 z-50 shadow-sm flex-shrink-0">
+          <div className="w-full px-6 h-16 flex items-center justify-between">
+            <div className="flex items-center gap-8 h-full">
+              <div className="flex items-center gap-2 cursor-pointer" onClick={() => setActiveTab('resumes')}>
+                <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center text-white font-bold">AI</div>
+                <span className="text-lg font-bold text-gray-900 tracking-tight">TalentScout</span>
+              </div>
+              <nav className="hidden md:flex space-x-6 text-sm font-medium text-gray-500 h-full">
+                {[
+                  {id: 'resumes', label: '简历管理'}, 
+                  {id: 'jobs', label: '职位匹配'}, 
+                  {id: 'upload', label: '上传中心'}
+                ].map(tab => (
+                  <button 
+                    key={tab.id}
+                    onClick={() => setActiveTab(tab.id)}
+                    className={`h-full border-b-2 pt-1 transition-colors ${activeTab === tab.id ? 'text-indigo-600 border-indigo-600' : 'border-transparent hover:text-gray-900'}`}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </nav>
+            </div>
+            <div className="flex items-center gap-4 relative">
+              <button className="p-2 text-gray-400 hover:text-gray-600"><Star size={20} /></button>
+              <div className="relative">
+                <button 
+                  onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
+                  className="flex items-center gap-2 hover:bg-gray-50 p-1 rounded-full pr-3 transition-colors border border-transparent hover:border-gray-200"
+                >
+                  <div className="w-8 h-8 bg-indigo-100 rounded-full flex items-center justify-center text-indigo-600 font-bold text-sm">
+                     {user.email?.charAt(0).toUpperCase()}
+                  </div>
+                  <ChevronDown size={14} className="text-gray-400" />
+                </button>
+                
+                {isUserMenuOpen && (
+                  <>
+                    <div className="fixed inset-0 z-10" onClick={() => setIsUserMenuOpen(false)}></div>
+                    <div className="absolute right-0 top-12 w-48 bg-white rounded-lg shadow-xl border border-gray-100 py-1 z-20 animate-in fade-in zoom-in-95 duration-100 origin-top-right">
+                      <div className="px-4 py-3 border-b border-gray-100 mb-1">
+                        <div className="font-medium text-sm text-gray-900 truncate">用户</div>
+                        <div className="text-xs text-gray-500 truncate" title={user.email}>{user.email}</div>
+                      </div>
+                      <button 
+                        onClick={() => {setActiveTab('profile'); setIsUserMenuOpen(false)}}
+                        className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                      >
+                        <User size={14} /> 用户(HR)信息
+                      </button>
+                      <button 
+                        onClick={() => {setActiveTab('upload'); setIsUserMenuOpen(false)}}
+                        className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                      >
+                        <UploadCloud size={14} /> 我的上传
+                      </button>
+                      <div className="border-t border-gray-100 mt-1 pt-1">
+                        <button 
+                          onClick={handleSignOut}
+                          className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50 flex items-center gap-2"
+                        >
+                          <LogOut size={14} /> 退出登录
+                        </button>
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        </header>
+      )}
+
+      <main className="flex-1 w-full flex overflow-hidden">
+        {activeTab === 'resumes' && !selectedCandidateId && (
+          <div className="flex h-full w-full">
+            <FilterSidebar filters={filters} setFilters={setFilters} onReset={handleResetFilters} />
+            {loading ? (
+              <div className="flex-1 flex flex-col items-center justify-center h-full text-gray-400">
+                <Loader2 size={48} className="animate-spin text-indigo-500 mb-4" />
+                <p>正在加载简历数据...</p>
+              </div>
+            ) : error ? (
+              <div className="flex-1 flex flex-col items-center justify-center h-full text-red-500">
+                <p>加载失败: {error}</p>
+                <button onClick={() => window.location.reload()} className="mt-4 px-4 py-2 bg-indigo-50 text-indigo-600 rounded hover:bg-indigo-100">重试</button>
+              </div>
+            ) : (
+              <ResumeList 
+                candidates={filteredCandidates} 
+                filters={filters} 
+                setFilters={setFilters} 
+                selectedIds={selectedIds} 
+                setSelectedIds={setSelectedIds} 
+                onUploadClick={() => setActiveTab('upload')}
+                onCandidateClick={handleCandidateClick}
+              />
+            )}
+          </div>
+        )}
+        {activeTab === 'resumes' && selectedCandidateId && (
+          <ResumeDetail onBack={handleBackToResumeList} candidateId={selectedCandidateId} />
+        )}
+
+        {activeTab === 'jobs' && !selectedCandidateId && <JobList />}
+        {activeTab === 'upload' && !selectedCandidateId && <UploadCenter onViewClick={() => setActiveTab('resumes')} />}
+        {activeTab === 'profile' && !selectedCandidateId && <UserProfile />}
+      </main>
+    </div>
+  );
+};
+
+export default ResumeApp;
