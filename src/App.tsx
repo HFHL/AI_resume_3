@@ -29,6 +29,10 @@ const ResumeApp = () => {
     search: '', degrees: [], schoolTags: [], minYears: '', companyTypes: [], tags: [], special: []
   });
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  
+  // Pagination State
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [itemsPerPage] = useState<number>(10);
 
   // Fetch candidates from Supabase
   useEffect(() => {
@@ -114,6 +118,20 @@ const ResumeApp = () => {
       return true;
     });
   }, [filters, candidates]);
+
+  // Paginated candidates
+  const paginatedCandidates = useMemo(() => {
+    const startIndex = (currentPage - 1) * itemsPerPage;
+    const endIndex = startIndex + itemsPerPage;
+    return filteredCandidates.slice(startIndex, endIndex);
+  }, [filteredCandidates, currentPage, itemsPerPage]);
+
+  const totalPages = Math.ceil(filteredCandidates.length / itemsPerPage);
+
+  // Reset to page 1 when filters change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [filters]);
 
   const handleResetFilters = () => {
     setFilters({search:'', degrees:[], schoolTags:[], minYears:'', companyTypes:[], tags: [], special:[]}); 
@@ -237,11 +255,16 @@ const ResumeApp = () => {
               </div>
             ) : (
               <ResumeList 
-                candidates={filteredCandidates} 
+                candidates={paginatedCandidates}
+                allCandidates={filteredCandidates}
                 filters={filters} 
                 setFilters={setFilters} 
                 selectedIds={selectedIds} 
                 setSelectedIds={setSelectedIds} 
+                currentPage={currentPage}
+                totalPages={totalPages}
+                itemsPerPage={itemsPerPage}
+                onPageChange={setCurrentPage}
                 onUploadClick={() => setActiveTab('upload')}
                 onCandidateClick={handleCandidateClick}
               />

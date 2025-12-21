@@ -4,24 +4,35 @@ import {
   Phone, Building2, MoreHorizontal 
 } from 'lucide-react';
 import { Tag } from './Tag';
+import { Pagination } from './Pagination';
 import { Candidate, FilterState } from '../types';
 
 interface ResumeListProps {
   candidates: Candidate[];
+  allCandidates: Candidate[];
   filters: FilterState;
   setFilters: React.Dispatch<React.SetStateAction<FilterState>>;
   selectedIds: string[];
   setSelectedIds: React.Dispatch<React.SetStateAction<string[]>>;
+  currentPage: number;
+  totalPages: number;
+  itemsPerPage: number;
+  onPageChange: (page: number) => void;
   onUploadClick: () => void;
   onCandidateClick: (id: string) => void;
 }
 
 export const ResumeList: React.FC<ResumeListProps> = ({ 
-  candidates, 
+  candidates,
+  allCandidates,
   filters, 
   setFilters, 
   selectedIds, 
   setSelectedIds,
+  currentPage,
+  totalPages,
+  itemsPerPage,
+  onPageChange,
   onUploadClick,
   onCandidateClick
 }) => {
@@ -30,6 +41,7 @@ export const ResumeList: React.FC<ResumeListProps> = ({
   };
 
   const handleSelectAll = () => {
+    // 只选择当前页的候选人
     setSelectedIds(selectedIds.length === candidates.length ? [] : candidates.map(c => c.id));
   };
 
@@ -71,7 +83,7 @@ export const ResumeList: React.FC<ResumeListProps> = ({
             </button>
           ) : (
             <>
-              <span className="text-sm text-gray-500 whitespace-nowrap">共 <strong className="text-gray-900">{candidates.length}</strong> 份</span>
+              <span className="text-sm text-gray-500 whitespace-nowrap">共 <strong className="text-gray-900">{allCandidates.length}</strong> 份</span>
               <div className="h-4 w-px bg-gray-300 mx-2"></div>
             </>
           )}
@@ -137,6 +149,16 @@ export const ResumeList: React.FC<ResumeListProps> = ({
           </div>
         )}
       </div>
+      
+      {allCandidates.length > 0 && (
+        <Pagination
+          currentPage={currentPage}
+          totalPages={totalPages}
+          totalItems={allCandidates.length}
+          itemsPerPage={itemsPerPage}
+          onPageChange={onPageChange}
+        />
+      )}
     </div>
   );
 };
