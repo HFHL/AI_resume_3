@@ -36,6 +36,10 @@ export const ResumeList: React.FC<ResumeListProps> = ({
   onUploadClick,
   onCandidateClick
 }) => {
+  // 在数据库真实数量基础上加上固定数字
+  const OFFSET_COUNT = 11348;
+  const displayTotalCount = allCandidates.length + OFFSET_COUNT;
+
   const toggleSelection = (id: string) => {
     setSelectedIds(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]);
   };
@@ -83,7 +87,7 @@ export const ResumeList: React.FC<ResumeListProps> = ({
             </button>
           ) : (
             <>
-              <span className="text-sm text-gray-500 whitespace-nowrap">共 <strong className="text-gray-900">{allCandidates.length}</strong> 份</span>
+              <span className="text-sm text-gray-500 whitespace-nowrap">共 <strong className="text-gray-900">{displayTotalCount}</strong> 份</span>
               <div className="h-4 w-px bg-gray-300 mx-2"></div>
             </>
           )}
@@ -154,7 +158,7 @@ export const ResumeList: React.FC<ResumeListProps> = ({
         <Pagination
           currentPage={currentPage}
           totalPages={totalPages}
-          totalItems={allCandidates.length}
+          totalItems={displayTotalCount}
           itemsPerPage={itemsPerPage}
           onPageChange={onPageChange}
         />
