@@ -41,20 +41,50 @@ const ResumeApp = () => {
     const fetchCandidates = async () => {
       setLoading(true);
       try {
-        const { data, error } = await supabase
-          .from('candidates')
-          .select(`
-            *,
-            candidate_educations (school, degree, major, school_tags),
-            candidate_work_experiences (company, role, department, start_date, end_date, description),
-            candidate_projects (project_name, role, description),
-            candidate_tags (
-              tags (tag_name, category)
-            )
-          `);
+        // 分页获取所有数据，Supabase 默认限制 1000 行
+        const PAGE_SIZE = 1000;
+        let allData: any[] = [];
+        let page = 0;
+        let hasMore = true;
 
-        if (error) throw error;
+        while (hasMore) {
+          const from = page * PAGE_SIZE;
+          const to = from + PAGE_SIZE - 1;
+          
+          const { data, error } = await supabase
+            .from('candidates')
+            .select(`
+              *,
+              candidate_educations (school, degree, major, school_tags),
+              candidate_work_experiences (company, role, department, start_date, end_date, description),
+              candidate_projects (project_name, role, description),
+              candidate_tags (
+                tags (tag_name, category)
+              )
+            `)
+            .order('updated_at', { ascending: false })
+            .range(from, to);
 
+          if (error) {
+            console.error('Error fetching candidates:', error);
+            throw error;
+          }
+
+          if (data && data.length > 0) {
+            allData = [...allData, ...data];
+            page++;
+            // 如果返回的数据少于 PAGE_SIZE，说明已经获取完所有数据
+            if (data.length < PAGE_SIZE) {
+              hasMore = false;
+            }
+          } else {
+            hasMore = false;
+          }
+        }
+
+        const data = allData;
+        console.log(`Fetched ${data?.length || 0} candidates from database (${page} pages)`);
+        
         // Transform Supabase data to frontend Candidate interface
         const formattedData: Candidate[] = (data || []).map((item: any) => {
           // Get latest work experience for title and company
@@ -68,15 +98,31 @@ const ResumeApp = () => {
           // Extract tags
           const tags = (item.candidate_tags || []).map((t: any) => t.tags?.tag_name).filter(Boolean);
 
+          // 调试：检查关键字段
+          if (!item.name || item.name.trim() === '') {
+            console.warn(`Candidate ${item.id} has empty name field`);
+          }
+          
+          // 调试：记录特定候选人
+          if (item.name && (item.name.includes('俞勇') || item.name.includes('Renee'))) {
+            console.log(`Processing candidate: ${item.name} (${item.id})`, {
+              hasWorks: works.length > 0,
+              hasEdus: edus.length > 0,
+              hasTags: tags.length > 0,
+              email: item.email || '', // 允许 email 为空字符串
+              phone: item.phone
+            });
+          }
+
           return {
             id: item.id,
-            name: item.name || 'Unknown',
+            name: (item.name && item.name.trim()) || 'Unknown',
             avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${item.id}`, // Generate avatar based on ID
             title: latestWork?.role || '待定职位',
             work_years: item.work_years || 0,
             degree: item.degree_level || mainEdu?.degree || '未知',
             phone: item.phone,
-            email: item.email,
+            email: item.email || '', // 允许 email 为空字符串
             school: {
               name: mainEdu?.school || '未填写',
               tags: mainEdu?.school_tags || []
@@ -113,6 +159,15 @@ const ResumeApp = () => {
         });
 
         setCandidates(formattedData);
+        console.log(`Formatted ${formattedData.length} candidates`);
+        
+        // 调试：检查是否有 Renee
+        const reneeCandidates = formattedData.filter(c => 
+          c.name && c.name.toLowerCase().includes('renee')
+        );
+        if (reneeCandidates.length > 0) {
+          console.log('Found Renee candidates:', reneeCandidates);
+        }
       } catch (err: any) {
         console.error('Error fetching candidates:', err);
         setError(err.message);
@@ -125,52 +180,80 @@ const ResumeApp = () => {
   }, [user]);
 
   const filteredCandidates = useMemo(() => {
-    return candidates.filter(c => {
+    const result = candidates.filter(c => {
+      // 确保候选人有有效的 ID 和 name
+      if (!c.id || !c.name || c.name === 'Unknown') {
+        return false; // 过滤掉无效数据
+      }
+
       if (filters.search) {
-        const q = filters.search.toLowerCase().trim();
+        const q = filters.search.trim();
         if (!q) return true; // 空搜索返回所有
         
-        // 搜索所有字段
+        // 对于中文搜索，不转换为小写（保持原样）
+        const qLower = q.toLowerCase();
+        
+        // 搜索所有字段（中文字段保持原样，英文字段转小写）
         const searchFields = [
-          // 基本信息
-          c.name?.toLowerCase() || '',
+          // 基本信息 - 中文字段保持原样
+          c.name || '',
           c.email?.toLowerCase() || '',
-          c.phone?.toLowerCase() || '',
-          c.location?.toLowerCase() || '',
-          c.title?.toLowerCase() || '',
-          c.company?.toLowerCase() || '',
-          c.degree?.toLowerCase() || '',
-          c.self_evaluation?.toLowerCase() || '',
+          c.phone || '',
+          c.location || '',
+          c.title || '',
+          c.company || '',
+          c.degree || '',
+          c.self_evaluation || '',
           // 学校信息
-          c.school?.name?.toLowerCase() || '',
-          ...(c.school?.tags || []).map(t => t.toLowerCase()),
+          c.school?.name || '',
+          ...(c.school?.tags || []),
           // 技能标签
-          ...(c.skills || []).map(s => s.toLowerCase()),
+          ...(c.skills || []),
           // 工作经历
           ...(c.work_experiences || []).flatMap(w => [
-            w.company?.toLowerCase() || '',
-            w.role?.toLowerCase() || '',
-            w.department?.toLowerCase() || '',
-            w.description?.toLowerCase() || ''
+            w.company || '',
+            w.role || '',
+            w.department || '',
+            w.description || ''
           ]),
           // 教育经历
           ...(c.educations || []).flatMap(e => [
-            e.school?.toLowerCase() || '',
-            e.degree?.toLowerCase() || '',
-            e.major?.toLowerCase() || '',
-            ...(e.school_tags || []).map(t => t.toLowerCase())
+            e.school || '',
+            e.degree || '',
+            e.major || '',
+            ...(e.school_tags || [])
           ]),
           // 项目经历
           ...(c.projects || []).flatMap(p => [
-            p.project_name?.toLowerCase() || '',
-            p.role?.toLowerCase() || '',
-            p.description?.toLowerCase() || ''
+            p.project_name || '',
+            p.role || '',
+            p.description || ''
           ])
         ];
         
         // 检查搜索关键词是否在任何字段中
-        const matches = searchFields.some(field => field.includes(q));
-        if (!matches) return false;
+        // 对于中文字符，直接匹配；对于英文字符，不区分大小写
+        const matches = searchFields.some(field => {
+          if (!field) return false;
+          // 如果搜索词包含中文字符，直接匹配
+          if (/[\u4e00-\u9fa5]/.test(q)) {
+            return field.includes(q);
+          }
+          // 否则不区分大小写匹配
+          return field.toLowerCase().includes(qLower);
+        });
+        
+        if (!matches) {
+          // 调试：如果没匹配到，记录原因
+          if (c.name && (c.name.includes('俞勇') || c.name.includes('Renee'))) {
+            console.log(`Candidate ${c.name} did not match search "${q}"`, {
+              name: c.name,
+              nameIncludes: c.name.includes(q),
+              searchFields: searchFields.slice(0, 5) // 只显示前5个字段
+            });
+          }
+          return false;
+        }
       }
       if (filters.degrees.length > 0 && !filters.degrees.includes(c.degree)) return false;
       if (filters.schoolTags.length > 0 && !c.school.tags.some(t => filters.schoolTags.includes(t))) return false;
@@ -181,6 +264,13 @@ const ResumeApp = () => {
       if (filters.special.includes('noPhone') && c.phone !== null) return false;
       return true;
     });
+    
+    // 调试：记录过滤结果
+    if (filters.search) {
+      console.log(`Search "${filters.search}": ${result.length} results from ${candidates.length} total`);
+    }
+    
+    return result;
   }, [filters, candidates]);
 
   // Paginated candidates

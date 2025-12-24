@@ -28,7 +28,7 @@ export interface Candidate {
   work_years: number;
   degree: string;
   phone: string | null;
-  email: string;
+  email: string | null;
   school: {
     name: string;
     tags: string[];
