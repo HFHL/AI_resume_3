@@ -5,6 +5,7 @@ import {
   FileText, Loader2
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import { getStorageUrl } from '../lib/storage';
 
 // --- COMPONENTS ---
 
@@ -77,33 +78,14 @@ export const ResumeDetail: React.FC<ResumeDetailProps> = ({ onBack, candidateId 
         // Handle resume_uploads being an array or object
         const uploadData = Array.isArray(data.resume_uploads) ? data.resume_uploads[0] : data.resume_uploads;
 
-        // Fetch PDF URL if path exists
+        // Fetch PDF URL if path exists (支持新旧存储 fallback)
         if (uploadData?.oss_raw_path) {
           console.log('Fetching signed URL for:', uploadData.oss_raw_path);
-          // Try 'resumes' first, if fail try 'resume' to support both conventions
-          let bucket = 'resumes'; 
-          
-          // First attempt with 'resumes'
-          let { data: signedData, error: signedError } = await supabase
-            .storage
-            .from(bucket)
-            .createSignedUrl(uploadData.oss_raw_path, 3600);
-
-          // If failed, try 'resume'
-          if (signedError) {
-             console.log(`Failed with bucket '${bucket}', trying 'resume'...`);
-             bucket = 'resume';
-             ({ data: signedData, error: signedError } = await supabase
-              .storage
-              .from(bucket)
-              .createSignedUrl(uploadData.oss_raw_path, 3600));
-          }
-          
-          if (signedError) {
-            console.error('Error fetching PDF URL:', signedError);
-          } else if (signedData) {
-            console.log('Signed URL obtained:', signedData.signedUrl);
-            setPdfUrl(signedData.signedUrl);
+          const signedUrl = await getStorageUrl(uploadData.oss_raw_path, ['resumes', 'resume'], 3600);
+          if (signedUrl) {
+            setPdfUrl(signedUrl);
+          } else {
+            console.error('无法从新存储或旧存储获取 PDF URL');
           }
         } else {
           console.warn('No oss_raw_path found in resume_uploads', data.resume_uploads);
