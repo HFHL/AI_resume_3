@@ -46,7 +46,8 @@ const ResumeApp = () => {
           .select(`
             *,
             candidate_educations (school, degree, major, school_tags),
-            candidate_work_experiences (company, role, start_date, end_date),
+            candidate_work_experiences (company, role, department, start_date, end_date, description),
+            candidate_projects (project_name, role, description),
             candidate_tags (
               tags (tag_name, category)
             )
@@ -86,7 +87,28 @@ const ResumeApp = () => {
             location: item.location || '未知',
             skills: tags,
             match_score: Math.floor(Math.random() * 40) + 60, // Random score for demo
-            last_active: new Date(item.updated_at).toLocaleDateString()
+            last_active: new Date(item.updated_at).toLocaleDateString(),
+            // 扩展字段用于搜索
+            work_experiences: works.map((w: any) => ({
+              company: w.company || '',
+              role: w.role || '',
+              department: w.department || '',
+              start_date: w.start_date || '',
+              end_date: w.end_date || '',
+              description: w.description || ''
+            })),
+            educations: edus.map((e: any) => ({
+              school: e.school || '',
+              degree: e.degree || '',
+              major: e.major || '',
+              school_tags: e.school_tags || []
+            })),
+            projects: (item.candidate_projects || []).map((p: any) => ({
+              project_name: p.project_name || '',
+              role: p.role || '',
+              description: p.description || ''
+            })),
+            self_evaluation: item.self_evaluation || ''
           };
         });
 
@@ -105,8 +127,50 @@ const ResumeApp = () => {
   const filteredCandidates = useMemo(() => {
     return candidates.filter(c => {
       if (filters.search) {
-        const q = filters.search.toLowerCase();
-        if (!(c.name.toLowerCase().includes(q) || c.skills.some(s => s.toLowerCase().includes(q)) || c.company.toLowerCase().includes(q))) return false;
+        const q = filters.search.toLowerCase().trim();
+        if (!q) return true; // 空搜索返回所有
+        
+        // 搜索所有字段
+        const searchFields = [
+          // 基本信息
+          c.name?.toLowerCase() || '',
+          c.email?.toLowerCase() || '',
+          c.phone?.toLowerCase() || '',
+          c.location?.toLowerCase() || '',
+          c.title?.toLowerCase() || '',
+          c.company?.toLowerCase() || '',
+          c.degree?.toLowerCase() || '',
+          c.self_evaluation?.toLowerCase() || '',
+          // 学校信息
+          c.school?.name?.toLowerCase() || '',
+          ...(c.school?.tags || []).map(t => t.toLowerCase()),
+          // 技能标签
+          ...(c.skills || []).map(s => s.toLowerCase()),
+          // 工作经历
+          ...(c.work_experiences || []).flatMap(w => [
+            w.company?.toLowerCase() || '',
+            w.role?.toLowerCase() || '',
+            w.department?.toLowerCase() || '',
+            w.description?.toLowerCase() || ''
+          ]),
+          // 教育经历
+          ...(c.educations || []).flatMap(e => [
+            e.school?.toLowerCase() || '',
+            e.degree?.toLowerCase() || '',
+            e.major?.toLowerCase() || '',
+            ...(e.school_tags || []).map(t => t.toLowerCase())
+          ]),
+          // 项目经历
+          ...(c.projects || []).flatMap(p => [
+            p.project_name?.toLowerCase() || '',
+            p.role?.toLowerCase() || '',
+            p.description?.toLowerCase() || ''
+          ])
+        ];
+        
+        // 检查搜索关键词是否在任何字段中
+        const matches = searchFields.some(field => field.includes(q));
+        if (!matches) return false;
       }
       if (filters.degrees.length > 0 && !filters.degrees.includes(c.degree)) return false;
       if (filters.schoolTags.length > 0 && !c.school.tags.some(t => filters.schoolTags.includes(t))) return false;

@@ -1,3 +1,25 @@
+export interface WorkExperience {
+  company: string;
+  role: string;
+  department?: string;
+  start_date?: string;
+  end_date?: string;
+  description?: string;
+}
+
+export interface Education {
+  school: string;
+  degree: string;
+  major?: string;
+  school_tags?: string[];
+}
+
+export interface Project {
+  project_name: string;
+  role?: string;
+  description?: string;
+}
+
 export interface Candidate {
   id: string;
   name: string;
@@ -18,6 +40,11 @@ export interface Candidate {
   skills: string[];
   match_score: number;
   last_active: string;
+  // 扩展字段用于搜索
+  work_experiences?: WorkExperience[];
+  educations?: Education[];
+  projects?: Project[];
+  self_evaluation?: string;
 }
 
 export interface Job {
