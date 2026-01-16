@@ -58,6 +58,20 @@ export interface Job {
   updated_at: string;
 }
 
+// Supabase: public.positions
+export interface Position {
+  id: number;
+  title: string;
+  department: string | null;
+  description: string;
+  category: string | null;
+  status: 'OPEN' | 'CLOSED' | string;
+  match_mode: 'any' | 'all' | string;
+  required_keywords: string[] | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
 export interface Upload {
   id: string;
   filename: string;
@@ -66,6 +80,19 @@ export interface Upload {
   error?: string;
   date: string;
   uploader_email?: string;
+}
+
+export type UserRole = 'user' | 'admin' | 'super_admin';
+export type ApprovalStatus = 'pending' | 'approved' | 'rejected';
+
+export interface UserProfile {
+  user_id: string;
+  email: string | null;
+  display_name: string;
+  role: UserRole;
+  approval_status: ApprovalStatus;
+  created_at?: string;
+  updated_at?: string;
 }
 
 export interface FilterState {
@@ -77,3 +104,4 @@ export interface FilterState {
   tags: string[];
   special: string[];
 }
+

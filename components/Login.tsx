@@ -1,10 +1,13 @@
+'use client';
+
 import React, { useState } from 'react';
-import { useAuth } from '../context/AuthContext';
+import { useAuth } from '@/contexts/AuthContext';
 import { Loader2 } from 'lucide-react';
 
 export const Login: React.FC = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [displayName, setDisplayName] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isSignUp, setIsSignUp] = useState(false);
@@ -20,15 +23,18 @@ export const Login: React.FC = () => {
 
     try {
       if (isSignUp) {
-        const { error, data } = await signUp(email, password);
+        if (!displayName.trim()) {
+          throw new Error('请填写显示名称');
+        }
+        const { error, data } = await signUp(email, password, displayName);
         if (error) throw error;
-        // Check if email confirmation is required (user is created but session might be null)
-        if (data?.user && !data.session) {
-           setMessage('注册成功！请检查您的邮箱以完成验证。');
-           // Optionally clear form or switch back to login
+        // Registration becomes an "application": admin must approve before login.
+        if (data?.user) {
+          setMessage('申请已提交，等待管理员审批。审批通过后才能登录。');
+          setIsSignUp(false);
+          setPassword('');
         } else {
-           // Auto login or success
-           setMessage('注册成功！正在登录...');
+          setMessage('注册成功！');
         }
       } else {
         const { error } = await signInWithPassword(email, password);
@@ -69,6 +75,22 @@ export const Login: React.FC = () => {
         )}
 
         <form onSubmit={handleSubmit} className="space-y-4">
+          {isSignUp && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                显示名称 <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="text"
+                required
+                value={displayName}
+                onChange={(e) => setDisplayName(e.target.value)}
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
+                placeholder="例如：张三 / Alice"
+              />
+              <p className="text-xs text-gray-500 mt-1">用于系统内展示，不会影响登录账号</p>
+            </div>
+          )}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
               邮箱地址
@@ -123,6 +145,7 @@ export const Login: React.FC = () => {
                 setIsSignUp(!isSignUp);
                 setError(null);
                 setMessage(null);
+                if (!isSignUp) setDisplayName('');
               }}
               className="ml-1 text-indigo-600 hover:text-indigo-700 font-medium hover:underline focus:outline-none"
             >
@@ -134,3 +157,4 @@ export const Login: React.FC = () => {
     </div>
   );
 };
+

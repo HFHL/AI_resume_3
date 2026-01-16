@@ -1,0 +1,235 @@
+'use client';
+
+import React, { createContext, useState, useEffect, useContext } from 'react';
+import { supabase } from '@/lib/supabase';
+import { Session, User } from '@supabase/supabase-js';
+import type { UserProfile, ApprovalStatus, UserRole } from '@/types';
+
+interface AuthContextType {
+  user: User | null;
+  session: Session | null;
+  displayName: string | null;
+  profile: UserProfile | null;
+  approvalStatus: ApprovalStatus | null;
+  role: UserRole | null;
+  isAdmin: boolean;
+  loading: boolean;
+  signIn: (email: string) => Promise<{ error: any }>;
+  signInWithPassword: (email: string, password: string) => Promise<{ error: any }>;
+  signUp: (email: string, password: string, displayName: string) => Promise<{ error: any; data: any }>;
+  updateDisplayName: (displayName: string) => Promise<{ error: any }>;
+  signOut: () => Promise<{ error: any }>;
+}
+
+const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const [user, setUser] = useState<User | null>(null);
+  const [session, setSession] = useState<Session | null>(null);
+  const [displayName, setDisplayName] = useState<string | null>(null);
+  const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [approvalStatus, setApprovalStatus] = useState<ApprovalStatus | null>(null);
+  const [role, setRole] = useState<UserRole | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  const deriveDisplayName = (u: User | null): string | null => {
+    if (!u) return null;
+    const meta: any = (u as any).user_metadata || {};
+    const dn = typeof meta.display_name === 'string' ? meta.display_name.trim() : '';
+    if (dn) return dn;
+    const fullName = typeof meta.full_name === 'string' ? meta.full_name.trim() : '';
+    if (fullName) return fullName;
+    return null;
+  };
+
+  const fetchProfile = async (u: User | null): Promise<UserProfile | null> => {
+    if (!u) return null;
+    try {
+      // Add timeout to avoid hanging if profiles table doesn't exist or RLS blocks
+      const timeoutPromise = new Promise<null>((resolve) => {
+        setTimeout(() => {
+          console.warn('fetchProfile timed out, continuing without profile');
+          resolve(null);
+        }, 5000);
+      });
+
+      const fetchPromise = (async () => {
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('user_id,email,display_name,role,approval_status,created_at,updated_at')
+          .eq('user_id', u.id)
+          .maybeSingle();
+
+        if (error) {
+          // If table doesn't exist or permission denied, just return null gracefully
+          console.warn('fetchProfile error (may be expected if profiles table not set up):', error.message);
+          return null;
+        }
+        return (data as any) || null;
+      })();
+
+      return await Promise.race([fetchPromise, timeoutPromise]);
+    } catch (e: any) {
+      console.error('fetchProfile failed:', e);
+      return null;
+    }
+  };
+
+  const applyProfileState = (p: UserProfile | null) => {
+    setProfile(p);
+    setApprovalStatus((p?.approval_status as any) || null);
+    setRole((p?.role as any) || null);
+    setIsAdmin(Boolean(p && p.approval_status === 'approved' && (p.role === 'admin' || p.role === 'super_admin')));
+    if (p?.display_name) setDisplayName(p.display_name);
+  };
+
+  useEffect(() => {
+    // Check active sessions and sets the user
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
+      setSession(session);
+      const u = session?.user ?? null;
+      setUser(u);
+      setDisplayName(deriveDisplayName(u));
+      const p = await fetchProfile(u);
+      applyProfileState(p);
+      setLoading(false);
+    });
+
+    // Listen for changes on auth state (logged in, signed out, etc.)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      setSession(session);
+      const u = session?.user ?? null;
+      setUser(u);
+      setDisplayName(deriveDisplayName(u));
+      const p = await fetchProfile(u);
+      applyProfileState(p);
+      setLoading(false);
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  const signIn = async (email: string) => {
+    // Magic link login (optional, but good to have)
+    const { error } = await supabase.auth.signInWithOtp({ email });
+    return { error };
+  };
+
+  const signInWithPassword = async (email: string, password: string) => {
+    const { error } = await supabase.auth.signInWithPassword({
+      email,
+      password
+    });
+    if (error) return { error };
+
+    // Enforce approval: if not approved, immediately sign out and block.
+    const { data: { user: u } } = await supabase.auth.getUser();
+    const p = await fetchProfile(u ?? null);
+    applyProfileState(p);
+
+    if (!p) {
+      await supabase.auth.signOut();
+      return { error: new Error('账号资料未初始化，请联系管理员') };
+    }
+    if (p.approval_status !== 'approved') {
+      await supabase.auth.signOut();
+      const msg =
+        p.approval_status === 'pending'
+          ? '账号待管理员审批，通过后才能登录'
+          : '账号已被管理员拒绝，请联系管理员';
+      return { error: new Error(msg) };
+    }
+
+    return { error: null };
+  };
+
+  const signUp = async (email: string, password: string, displayName: string) => {
+    const { data, error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        data: {
+          display_name: displayName.trim(),
+        },
+      },
+    });
+
+    // Create a pending profile row for approval workflow (best-effort).
+    if (!error && data?.user) {
+      try {
+        const payload = {
+          user_id: data.user.id,
+          email: data.user.email,
+          display_name: displayName.trim(),
+          role: 'user',
+          approval_status: 'pending',
+        };
+        const { error: pErr } = await supabase.from('profiles').upsert(payload, { onConflict: 'user_id' });
+        if (pErr) console.error('profiles upsert failed:', pErr);
+      } catch (e) {
+        console.error('profiles upsert exception:', e);
+      }
+
+      // Make signup an "application": do not keep a logged-in session.
+      try {
+        await supabase.auth.signOut();
+      } catch {}
+    }
+
+    return { data, error };
+  };
+
+  const updateDisplayName = async (newDisplayName: string) => {
+    const trimmed = newDisplayName.trim();
+    if (!trimmed) return { error: new Error('显示名称不能为空') };
+
+    const { data, error } = await supabase.auth.updateUser({
+      data: { display_name: trimmed },
+    });
+
+    if (!error) {
+      const u = data?.user ?? user;
+      setUser(u ?? null);
+      setDisplayName(trimmed);
+
+      // Keep profiles table in sync (best-effort). Requires RLS allow own update.
+      if (u?.id) {
+        const { error: pErr } = await supabase
+          .from('profiles')
+          .update({ display_name: trimmed })
+          .eq('user_id', u.id);
+        if (pErr) console.warn('profiles display_name update failed:', pErr.message);
+        const p = await fetchProfile(u);
+        applyProfileState(p);
+      }
+    }
+
+    return { error };
+  };
+
+  const signOut = async () => {
+    const { error } = await supabase.auth.signOut();
+    setProfile(null);
+    setApprovalStatus(null);
+    setRole(null);
+    setIsAdmin(false);
+    setDisplayName(null);
+    return { error };
+  };
+
+  return (
+    <AuthContext.Provider value={{ user, session, displayName, profile, approvalStatus, role, isAdmin, loading, signIn, signInWithPassword, signUp, updateDisplayName, signOut }}>
+      {children}
+    </AuthContext.Provider>
+  );
+};
+
+export const useAuth = () => {
+  const context = useContext(AuthContext);
+  if (context === undefined) {
+    throw new Error('useAuth must be used within an AuthProvider');
+  }
+  return context;
+};
+

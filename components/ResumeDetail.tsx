@@ -1,11 +1,13 @@
-import React, { useState, useEffect } from 'react';
+'use client';
+
+import React, { useMemo, useState, useEffect } from 'react';
 import { 
-  ArrowLeft, Download, MoreHorizontal, Edit3, Mail, Phone, MapPin, 
+  ArrowLeft, Download, MoreHorizontal, Edit3, Mail, Phone, MapPin,
   Calendar, Building2, GraduationCap, Briefcase, ExternalLink, 
-  FileText, Loader2
+  FileText, Loader2, RefreshCcw, Save, Wrench
 } from 'lucide-react';
-import { supabase } from '../lib/supabase';
-import { getStorageUrl } from '../lib/storage';
+import { supabase } from '@/lib/supabase';
+import { getStorageUrl } from '@/lib/storage';
 
 // --- COMPONENTS ---
 
@@ -49,6 +51,22 @@ export const ResumeDetail: React.FC<ResumeDetailProps> = ({ onBack, candidateId 
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [repairing, setRepairing] = useState(false);
+
+  const [editForm, setEditForm] = useState({
+    name: '',
+    email: '',
+    phone: '',
+    location: '',
+    degree_level: '',
+    work_years: '',
+    self_evaluation: ''
+  });
+
+  const [fileForm, setFileForm] = useState({
+    oss_raw_path: ''
+  });
 
   useEffect(() => {
     if (!candidateId) return;
@@ -66,21 +84,35 @@ export const ResumeDetail: React.FC<ResumeDetailProps> = ({ onBack, candidateId 
             candidate_tags (
               tags (tag_name, category)
             ),
-            resume_uploads (filename, oss_raw_path)
+            resume_uploads (id, filename, oss_raw_path, status, error_reason, updated_at)
           `)
           .eq('id', candidateId)
           .single();
 
         if (error) throw error;
         setCandidate(data);
-        console.log('Candidate Data:', data);
 
         // Handle resume_uploads being an array or object
         const uploadData = Array.isArray(data.resume_uploads) ? data.resume_uploads[0] : data.resume_uploads;
 
+        // init edit form
+        setEditForm({
+          name: data.name || '',
+          email: data.email || '',
+          phone: data.phone || '',
+          location: data.location || '',
+          degree_level: data.degree_level || '',
+          work_years: data.work_years != null ? String(data.work_years) : '',
+          self_evaluation: data.self_evaluation || ''
+        });
+
+        // init file form
+        setFileForm({
+          oss_raw_path: uploadData?.oss_raw_path || ''
+        });
+
         // Fetch PDF URL if path exists (支持新旧存储 fallback)
         if (uploadData?.oss_raw_path) {
-          console.log('Fetching signed URL for:', uploadData.oss_raw_path);
           const signedUrl = await getStorageUrl(uploadData.oss_raw_path, ['resumes', 'resume'], 3600);
           if (signedUrl) {
             setPdfUrl(signedUrl);
@@ -101,6 +133,115 @@ export const ResumeDetail: React.FC<ResumeDetailProps> = ({ onBack, candidateId 
 
     fetchDetail();
   }, [candidateId]);
+
+  const uploadData = useMemo(() => {
+    if (!candidate) return null;
+    return Array.isArray(candidate.resume_uploads) ? candidate.resume_uploads[0] : candidate.resume_uploads;
+  }, [candidate]);
+
+  const refreshPreviewUrl = async () => {
+    if (!fileForm.oss_raw_path) return;
+    const signedUrl = await getStorageUrl(fileForm.oss_raw_path, ['resumes', 'resume'], 3600);
+    if (signedUrl) setPdfUrl(signedUrl);
+  };
+
+  const saveCandidate = async () => {
+    if (!candidateId) return;
+    setSaving(true);
+    try {
+      const payload: any = {
+        name: editForm.name.trim() || null,
+        email: editForm.email.trim() || null,
+        phone: editForm.phone.trim() || null,
+        location: editForm.location.trim() || null,
+        degree_level: editForm.degree_level.trim() || null,
+        self_evaluation: editForm.self_evaluation.trim() || null,
+      };
+      const wy = editForm.work_years.trim();
+      payload.work_years = wy ? Number(wy) : null;
+
+      const { error } = await supabase.from('candidates').update(payload).eq('id', candidateId);
+      if (error) throw error;
+
+      // update local candidate state for immediate UI
+      setCandidate((prev: any) => ({ ...prev, ...payload }));
+      setIsEditing(false);
+    } catch (e: any) {
+      console.error('saveCandidate failed:', e);
+      alert(e?.message || '保存失败');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const saveFilePath = async () => {
+    if (!uploadData?.id) {
+      alert('未找到上传记录（resume_uploads）');
+      return;
+    }
+    setRepairing(true);
+    try {
+      const { error } = await supabase
+        .from('resume_uploads')
+        .update({ oss_raw_path: fileForm.oss_raw_path.trim() || null })
+        .eq('id', uploadData.id);
+      if (error) throw error;
+      await refreshPreviewUrl();
+      setCandidate((prev: any) => {
+        const nextUpload = { ...(Array.isArray(prev.resume_uploads) ? prev.resume_uploads[0] : prev.resume_uploads), oss_raw_path: fileForm.oss_raw_path.trim() || null };
+        return { ...prev, resume_uploads: Array.isArray(prev.resume_uploads) ? [nextUpload] : nextUpload };
+      });
+    } catch (e: any) {
+      console.error('saveFilePath failed:', e);
+      alert(e?.message || '文件路径保存失败');
+    } finally {
+      setRepairing(false);
+    }
+  };
+
+  const rerunOCR = async () => {
+    if (!uploadData?.id) {
+      alert('未找到上传记录（resume_uploads）');
+      return;
+    }
+    if (!confirm('确定要重新 OCR 吗？这会把状态重置为 PENDING，等待后端 Pipeline 重新处理。')) return;
+    setRepairing(true);
+    try {
+      const { error } = await supabase
+        .from('resume_uploads')
+        .update({ status: 'PENDING', error_reason: null, ocr_content: null })
+        .eq('id', uploadData.id);
+      if (error) throw error;
+      alert('已提交重新 OCR（PENDING）。请等待后端 Pipeline 处理。');
+    } catch (e: any) {
+      console.error('rerunOCR failed:', e);
+      alert(e?.message || '提交失败');
+    } finally {
+      setRepairing(false);
+    }
+  };
+
+  const rerunParse = async () => {
+    if (!uploadData?.id) {
+      alert('未找到上传记录（resume_uploads）');
+      return;
+    }
+    if (!confirm('确定要重新解析吗？这会把状态重置为 OCR_DONE，等待后端 Pipeline 重新提取结构化信息。')) return;
+    setRepairing(true);
+    try {
+      const { error } = await supabase
+        .from('resume_uploads')
+        .update({ status: 'OCR_DONE', error_reason: null })
+        .eq('id', uploadData.id);
+      if (error) throw error;
+      alert('已提交重新解析（OCR_DONE）。请等待后端 Pipeline 处理。');
+    } catch (e: any) {
+      console.error('rerunParse failed:', e);
+      alert(e?.message || '提交失败');
+    } finally {
+      setRepairing(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -125,7 +266,6 @@ export const ResumeDetail: React.FC<ResumeDetailProps> = ({ onBack, candidateId 
   const skills = candidate.candidate_tags?.map((t: any) => t.tags?.tag_name).filter(Boolean) || [];
   
   // Safe access to filename
-  const uploadData = Array.isArray(candidate.resume_uploads) ? candidate.resume_uploads[0] : candidate.resume_uploads;
   const filename = uploadData?.filename || '未找到文件';
 
   return (
@@ -152,7 +292,17 @@ export const ResumeDetail: React.FC<ResumeDetailProps> = ({ onBack, candidateId 
           </div>
         </div>
         <div className="flex items-center gap-3">
-          <button className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg"><Download size={20} /></button>
+          {pdfUrl && (
+            <a
+              href={pdfUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg"
+              title="下载/打开原始文件"
+            >
+              <Download size={20} />
+            </a>
+          )}
           <button className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg"><MoreHorizontal size={20} /></button>
         </div>
       </header>
@@ -174,15 +324,68 @@ export const ResumeDetail: React.FC<ResumeDetailProps> = ({ onBack, candidateId 
               <div className="flex-1">
                 <div className="flex justify-between items-start">
                   <div>
-                    <h2 className="text-2xl font-bold text-gray-900 mb-2">{candidate.name}</h2>
+                    {isEditing ? (
+                      <div className="space-y-3">
+                        <input
+                          value={editForm.name}
+                          onChange={e => setEditForm(prev => ({ ...prev, name: e.target.value }))}
+                          className="w-full text-2xl font-bold text-gray-900 bg-white border border-gray-200 rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-500 outline-none"
+                          placeholder="姓名"
+                        />
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                          <input
+                            value={editForm.phone}
+                            onChange={e => setEditForm(prev => ({ ...prev, phone: e.target.value }))}
+                            className="w-full text-sm bg-white border border-gray-200 rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-500 outline-none"
+                            placeholder="电话"
+                          />
+                          <input
+                            value={editForm.email}
+                            onChange={e => setEditForm(prev => ({ ...prev, email: e.target.value }))}
+                            className="w-full text-sm bg-white border border-gray-200 rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-500 outline-none"
+                            placeholder="邮箱"
+                          />
+                          <input
+                            value={editForm.location}
+                            onChange={e => setEditForm(prev => ({ ...prev, location: e.target.value }))}
+                            className="w-full text-sm bg-white border border-gray-200 rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-500 outline-none"
+                            placeholder="所在地"
+                          />
+                          <input
+                            value={editForm.degree_level}
+                            onChange={e => setEditForm(prev => ({ ...prev, degree_level: e.target.value }))}
+                            className="w-full text-sm bg-white border border-gray-200 rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-500 outline-none"
+                            placeholder="学历（本科/硕士/博士...）"
+                          />
+                          <input
+                            value={editForm.work_years}
+                            onChange={e => setEditForm(prev => ({ ...prev, work_years: e.target.value }))}
+                            className="w-full text-sm bg-white border border-gray-200 rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-500 outline-none"
+                            placeholder="工龄（数字）"
+                          />
+                        </div>
+                      </div>
+                    ) : (
+                      <h2 className="text-2xl font-bold text-gray-900 mb-2">{candidate.name}</h2>
+                    )}
                     <p className="text-gray-600 mb-4 font-medium">{headline}</p>
                   </div>
-                  <button 
-                    onClick={() => setIsEditing(!isEditing)}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-sm transition-colors ${isEditing ? 'bg-indigo-100 text-indigo-700' : 'text-gray-500 hover:bg-gray-100'}`}
-                  >
-                    <Edit3 size={14} /> {isEditing ? '保存' : '编辑'}
-                  </button>
+                  {isEditing ? (
+                    <button
+                      onClick={saveCandidate}
+                      disabled={saving}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded text-sm transition-colors bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-60"
+                    >
+                      {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />} 保存
+                    </button>
+                  ) : (
+                    <button 
+                      onClick={() => setIsEditing(true)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded text-sm transition-colors text-gray-500 hover:bg-gray-100"
+                    >
+                      <Edit3 size={14} /> 编辑
+                    </button>
+                  )}
                 </div>
                 
                 {/* Basic Info Grid */}
@@ -229,12 +432,74 @@ export const ResumeDetail: React.FC<ResumeDetailProps> = ({ onBack, candidateId 
             )}
 
             {/* Self Evaluation */}
-            {candidate.self_evaluation && (
-               <div className="mb-8 bg-blue-50 p-4 rounded-lg border border-blue-100 text-sm text-blue-800 leading-relaxed">
-                 <h4 className="font-bold mb-2 text-blue-900">自我评价 / AI 总结</h4>
-                 {candidate.self_evaluation}
-               </div>
-            )}
+            <div className="mb-8 bg-blue-50 p-4 rounded-lg border border-blue-100 text-sm text-blue-800 leading-relaxed">
+              <h4 className="font-bold mb-2 text-blue-900">自我评价 / AI 总结</h4>
+              {isEditing ? (
+                <textarea
+                  value={editForm.self_evaluation}
+                  onChange={e => setEditForm(prev => ({ ...prev, self_evaluation: e.target.value }))}
+                  className="w-full min-h-[120px] px-3 py-2 border border-blue-200 rounded-lg text-sm bg-white text-gray-800 focus:ring-2 focus:ring-indigo-500 outline-none"
+                  placeholder="自我评价"
+                />
+              ) : (
+                candidate.self_evaluation || <span className="text-blue-700/60">（空）</span>
+              )}
+            </div>
+
+            {/* File Management & Repair */}
+            <SectionTitle title="原始文件与修复" icon={Wrench} />
+            <div className="bg-white border border-gray-200 rounded-lg p-4 space-y-3">
+              <div className="text-xs text-gray-500">
+                上传记录状态：<span className="font-medium text-gray-900">{uploadData?.status || '-'}</span>
+                {uploadData?.error_reason ? (
+                  <span className="ml-2 text-red-600">失败原因：{uploadData.error_reason}</span>
+                ) : null}
+              </div>
+              <div>
+                <div className="text-xs text-gray-500 mb-1">oss_raw_path（可手动修复）</div>
+                <input
+                  value={fileForm.oss_raw_path}
+                  onChange={e => setFileForm({ oss_raw_path: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+                  placeholder="例如：userId/xxx.pdf 或 https://.../object/public/resumes/xxx"
+                />
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  onClick={saveFilePath}
+                  disabled={repairing}
+                  className="px-3 py-2 rounded-lg bg-indigo-600 text-white text-sm hover:bg-indigo-700 disabled:opacity-60"
+                >
+                  保存文件路径
+                </button>
+                <button
+                  onClick={refreshPreviewUrl}
+                  disabled={repairing}
+                  className="px-3 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm hover:bg-gray-50 disabled:opacity-60 flex items-center gap-2"
+                >
+                  <RefreshCcw size={14} /> 刷新预览链接
+                </button>
+                <button
+                  onClick={rerunOCR}
+                  disabled={repairing}
+                  className="px-3 py-2 rounded-lg border border-orange-300 text-orange-700 text-sm hover:bg-orange-50 disabled:opacity-60"
+                  title="把 resume_uploads.status 置为 PENDING"
+                >
+                  重新 OCR
+                </button>
+                <button
+                  onClick={rerunParse}
+                  disabled={repairing}
+                  className="px-3 py-2 rounded-lg border border-blue-300 text-blue-700 text-sm hover:bg-blue-50 disabled:opacity-60"
+                  title="把 resume_uploads.status 置为 OCR_DONE"
+                >
+                  重新解析
+                </button>
+              </div>
+              <div className="text-xs text-gray-500">
+                说明：以上"重新 OCR/解析"会把状态改回待处理，需后端 <code>full_pipeline_test.py</code> 在跑，才会自动执行。
+              </div>
+            </div>
 
             {/* Work Experience */}
             <SectionTitle title="工作经历" icon={Briefcase} action="添加经历" />
@@ -365,3 +630,4 @@ export const ResumeDetail: React.FC<ResumeDetailProps> = ({ onBack, candidateId 
     </div>
   );
 };
+

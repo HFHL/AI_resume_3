@@ -1,8 +1,10 @@
+'use client';
+
 import React from 'react';
 import { Filter } from 'lucide-react';
 import { FilterSection } from './FilterSection';
-import { AVAILABLE_TAGS } from '../data/mockData';
-import { FilterState } from '../types';
+import { AVAILABLE_TAGS } from '@/data/mockData';
+import { FilterState } from '@/types';
 
 interface FilterSidebarProps {
   filters: FilterState;
@@ -112,3 +114,4 @@ export const FilterSidebar: React.FC<FilterSidebarProps> = ({ filters, setFilter
     </aside>
   );
 };
+

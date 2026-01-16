@@ -1,4 +1,4 @@
-import { Candidate, Job, Upload } from '../types';
+import { Candidate, Job, Upload } from '@/types';
 
 export const MOCK_CANDIDATES: Candidate[] = [
   {
@@ -140,3 +140,4 @@ export const AVAILABLE_TAGS = {
   tech: ['Java', 'Python', 'Go', 'C++', 'React', 'Vue', 'Spring Boot', 'K8s'],
   business: ['DeFi', 'Tokenomics', 'Machine Learning', 'Alpha Strategy', 'English']
 };
+

@@ -1,15 +1,17 @@
+'use client';
+
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { UploadCloud, Clock, FileText, CheckCircle, Loader2, AlertCircle, RefreshCw, Eye } from 'lucide-react';
-import { Upload } from '../types';
-import { supabase } from '../lib/supabase';
-import { useAuth } from '../context/AuthContext';
+import { Upload } from '@/types';
+import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/contexts/AuthContext';
 
 interface UploadCenterProps {
   onViewClick: () => void;
 }
 
 export const UploadCenter: React.FC<UploadCenterProps> = ({ onViewClick }) => {
-  const { user } = useAuth();
+  const { user, displayName } = useAuth();
   const [uploadStatusFilter, setUploadStatusFilter] = useState<string>('all'); // 'all', 'success', 'processing', 'failed'
   const [uploads, setUploads] = useState<Upload[]>([]);
   const [loading, setLoading] = useState(true);
@@ -255,11 +257,11 @@ export const UploadCenter: React.FC<UploadCenterProps> = ({ onViewClick }) => {
                       </td>
                       <td className="px-6 py-4 text-gray-500">{file.size}</td>
                       <td className="px-6 py-4 text-gray-500">
-                        <div className="flex items-center gap-1.5" title={file.uploader_email}>
+                        <div className="flex items-center gap-1.5" title={displayName || ''}>
                            <div className="w-5 h-5 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center text-[10px] font-bold">
-                             {file.uploader_email ? file.uploader_email.charAt(0).toUpperCase() : 'U'}
+                             {(displayName || 'U').charAt(0).toUpperCase()}
                            </div>
-                           <span className="truncate max-w-[120px]">{file.uploader_email || '未知'}</span>
+                           <span className="truncate max-w-[120px]">{displayName || '未设置'}</span>
                         </div>
                       </td>
                       <td className="px-6 py-4">
@@ -290,3 +292,4 @@ export const UploadCenter: React.FC<UploadCenterProps> = ({ onViewClick }) => {
     </div>
   );
 };
+

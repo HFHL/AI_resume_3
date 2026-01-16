@@ -1,27 +1,34 @@
+'use client';
+
 import { useState, useMemo, useEffect } from 'react';
 import { Star, ChevronDown, User, UploadCloud, LogOut, Loader2 } from 'lucide-react';
-import { FilterSidebar } from './components/FilterSidebar';
-import { ResumeList } from './components/ResumeList';
-import { ResumeDetail } from './components/ResumeDetail';
-import { JobList } from './components/JobList';
-import { UploadCenter } from './components/UploadCenter';
-import { UserProfile } from './components/UserProfile';
-import { Login } from './components/Login';
-import { useAuth } from './context/AuthContext';
-// import { MOCK_CANDIDATES } from './data/mockData'; // MOCK DATA NO LONGER USED
-import { FilterState, Candidate } from './types';
-import { supabase } from './lib/supabase';
+import { FilterSidebar } from '@/components/FilterSidebar';
+import { ResumeList } from '@/components/ResumeList';
+import { ResumeDetail } from '@/components/ResumeDetail';
+import { JobList } from '@/components/JobList';
+import { UploadCenter } from '@/components/UploadCenter';
+import { UserProfile } from '@/components/UserProfile';
+import { UserManagement } from '@/components/UserManagement';
+import { Login } from '@/components/Login';
+import { useAuth } from '@/contexts/AuthContext';
+import { FilterState, Candidate } from '@/types';
+import { supabase } from '@/lib/supabase';
 
-const ResumeApp = () => {
-  const { user, loading: authLoading, signOut } = useAuth();
+export default function ResumeApp() {
+  const { user, displayName, isAdmin, loading: authLoading, signOut } = useAuth();
   
-  const [activeTab, setActiveTab] = useState<string>('resumes'); // 'resumes', 'jobs', 'upload', 'profile'
+  const [activeTab, setActiveTab] = useState<string>('resumes'); // 'resumes', 'jobs', 'upload', 'profile', 'users'
   const [selectedCandidateId, setSelectedCandidateId] = useState<string | null>(null);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   
   // Real Data State
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
+  const [syncing, setSyncing] = useState<boolean>(false);
+  const [syncStats, setSyncStats] = useState<{ pagesLoaded: number; totalLoaded: number }>({
+    pagesLoaded: 0,
+    totalLoaded: 0,
+  });
   const [error, setError] = useState<string | null>(null);
 
   // Resume List State
@@ -39,80 +46,20 @@ const ResumeApp = () => {
     if (!user) return;
 
     const fetchCandidates = async () => {
-      setLoading(true);
-      try {
-        // 分页获取所有数据，Supabase 默认限制 1000 行
-        const PAGE_SIZE = 1000;
-        let allData: any[] = [];
-        let page = 0;
-        let hasMore = true;
+      let cancelled = false;
 
-        while (hasMore) {
-          const from = page * PAGE_SIZE;
-          const to = from + PAGE_SIZE - 1;
-          
-          const { data, error } = await supabase
-            .from('candidates')
-            .select(`
-              *,
-              candidate_educations (school, degree, major, school_tags),
-              candidate_work_experiences (company, role, department, start_date, end_date, description),
-              candidate_projects (project_name, role, description),
-              candidate_tags (
-                tags (tag_name, category)
-              )
-            `)
-            .order('updated_at', { ascending: false })
-            .range(from, to);
-
-          if (error) {
-            console.error('Error fetching candidates:', error);
-            throw error;
-          }
-
-          if (data && data.length > 0) {
-            allData = [...allData, ...data];
-            page++;
-            // 如果返回的数据少于 PAGE_SIZE，说明已经获取完所有数据
-            if (data.length < PAGE_SIZE) {
-              hasMore = false;
-            }
-          } else {
-            hasMore = false;
-          }
-        }
-
-        const data = allData;
-        console.log(`Fetched ${data?.length || 0} candidates from database (${page} pages)`);
-        
-        // Transform Supabase data to frontend Candidate interface
-        const formattedData: Candidate[] = (data || []).map((item: any) => {
+      const formatCandidates = (data: any[]): Candidate[] => {
+        return (data || []).map((item: any) => {
           // Get latest work experience for title and company
           const works = item.candidate_work_experiences || [];
           const latestWork = works.length > 0 ? works[0] : null; // Assuming order or just taking first found
-          
+
           // Get highest/first education
           const edus = item.candidate_educations || [];
           const mainEdu = edus.length > 0 ? edus[0] : null;
 
           // Extract tags
           const tags = (item.candidate_tags || []).map((t: any) => t.tags?.tag_name).filter(Boolean);
-
-          // 调试：检查关键字段
-          if (!item.name || item.name.trim() === '') {
-            console.warn(`Candidate ${item.id} has empty name field`);
-          }
-          
-          // 调试：记录特定候选人
-          if (item.name && (item.name.includes('俞勇') || item.name.includes('Renee'))) {
-            console.log(`Processing candidate: ${item.name} (${item.id})`, {
-              hasWorks: works.length > 0,
-              hasEdus: edus.length > 0,
-              hasTags: tags.length > 0,
-              email: item.email || '', // 允许 email 为空字符串
-              phone: item.phone
-            });
-          }
 
           return {
             id: item.id,
@@ -157,22 +104,85 @@ const ResumeApp = () => {
             self_evaluation: item.self_evaluation || ''
           };
         });
+      };
 
-        setCandidates(formattedData);
-        console.log(`Formatted ${formattedData.length} candidates`);
-        
-        // 调试：检查是否有 Renee
-        const reneeCandidates = formattedData.filter(c => 
-          c.name && c.name.toLowerCase().includes('renee')
-        );
-        if (reneeCandidates.length > 0) {
-          console.log('Found Renee candidates:', reneeCandidates);
+      setLoading(true);
+      setSyncing(false);
+      setSyncStats({ pagesLoaded: 0, totalLoaded: 0 });
+      setError(null);
+      try {
+        // 分页获取所有数据，Supabase 默认限制 1000 行
+        // 优化：先拉首屏立即渲染，剩余页后台增量同步，避免“永远加载中”的体验。
+        const PAGE_SIZE = 1000;
+        const fetchPage = async (page: number) => {
+          const from = page * PAGE_SIZE;
+          const to = from + PAGE_SIZE - 1;
+          return await supabase
+            .from('candidates')
+            .select(`
+              *,
+              candidate_educations (school, degree, major, school_tags),
+              candidate_work_experiences (company, role, department, start_date, end_date, description),
+              candidate_projects (project_name, role, description),
+              candidate_tags (
+                tags (tag_name, category)
+              )
+            `)
+            .order('updated_at', { ascending: false })
+            .range(from, to);
+        };
+
+        // 1) First page (fast path)
+        const first = await fetchPage(0);
+        if (first.error) throw first.error;
+        const firstFormatted = formatCandidates(first.data || []);
+        if (!cancelled) {
+          setCandidates(firstFormatted);
+          setSyncStats({ pagesLoaded: 1, totalLoaded: firstFormatted.length });
+          setLoading(false);
+        }
+
+        // 2) Background sync remaining pages
+        if ((first.data || []).length >= PAGE_SIZE) {
+          if (!cancelled) setSyncing(true);
+          let page = 1;
+          let hasMore = true;
+
+          while (hasMore && !cancelled) {
+            const res = await fetchPage(page);
+            if (res.error) {
+              console.error('Error fetching candidates (background):', res.error);
+              setError(res.error.message || '加载失败');
+              break;
+            }
+
+            const rows = res.data || [];
+            if (rows.length === 0) {
+              hasMore = false;
+              break;
+            }
+
+            const formatted = formatCandidates(rows);
+            setCandidates(prev => [...prev, ...formatted]);
+            setSyncStats(prev => ({
+              pagesLoaded: prev.pagesLoaded + 1,
+              totalLoaded: prev.totalLoaded + formatted.length,
+            }));
+
+            if (rows.length < PAGE_SIZE) hasMore = false;
+            page += 1;
+          }
+
+          if (!cancelled) setSyncing(false);
+        } else {
+          if (!cancelled) setSyncing(false);
         }
       } catch (err: any) {
         console.error('Error fetching candidates:', err);
-        setError(err.message);
-      } finally {
-        setLoading(false);
+        if (!cancelled) {
+          setError(err.message);
+          setLoading(false);
+        }
       }
     };
 
@@ -301,8 +311,16 @@ const ResumeApp = () => {
   };
 
   const handleSignOut = async () => {
-    await signOut();
-    setIsUserMenuOpen(false);
+    try {
+      await signOut();
+      setIsUserMenuOpen(false);
+      // Force reload to clear all cached state
+      window.location.href = '/';
+    } catch (e) {
+      console.error('signOut failed:', e);
+      // Force reload anyway
+      window.location.href = '/';
+    }
   };
 
   if (authLoading) {
@@ -331,7 +349,8 @@ const ResumeApp = () => {
                 {[
                   {id: 'resumes', label: '简历管理'}, 
                   {id: 'jobs', label: '职位匹配'}, 
-                  {id: 'upload', label: '上传中心'}
+                  {id: 'upload', label: '上传中心'},
+                  ...(isAdmin ? [{ id: 'users', label: '用户管理' }] : []),
                 ].map(tab => (
                   <button 
                     key={tab.id}
@@ -351,7 +370,7 @@ const ResumeApp = () => {
                   className="flex items-center gap-2 hover:bg-gray-50 p-1 rounded-full pr-3 transition-colors border border-transparent hover:border-gray-200"
                 >
                   <div className="w-8 h-8 bg-indigo-100 rounded-full flex items-center justify-center text-indigo-600 font-bold text-sm">
-                     {user.email?.charAt(0).toUpperCase()}
+                     {(displayName || 'U').charAt(0).toUpperCase()}
                   </div>
                   <ChevronDown size={14} className="text-gray-400" />
                 </button>
@@ -361,8 +380,8 @@ const ResumeApp = () => {
                     <div className="fixed inset-0 z-10" onClick={() => setIsUserMenuOpen(false)}></div>
                     <div className="absolute right-0 top-12 w-48 bg-white rounded-lg shadow-xl border border-gray-100 py-1 z-20 animate-in fade-in zoom-in-95 duration-100 origin-top-right">
                       <div className="px-4 py-3 border-b border-gray-100 mb-1">
-                        <div className="font-medium text-sm text-gray-900 truncate">用户</div>
-                        <div className="text-xs text-gray-500 truncate" title={user.email}>{user.email}</div>
+                        <div className="font-medium text-sm text-gray-900 truncate">{displayName || '用户'}</div>
+                        <div className="text-xs text-gray-500 truncate">已登录</div>
                       </div>
                       <button 
                         onClick={() => {setActiveTab('profile'); setIsUserMenuOpen(false)}}
@@ -408,20 +427,28 @@ const ResumeApp = () => {
                 <button onClick={() => window.location.reload()} className="mt-4 px-4 py-2 bg-indigo-50 text-indigo-600 rounded hover:bg-indigo-100">重试</button>
               </div>
             ) : (
-              <ResumeList 
-                candidates={paginatedCandidates}
-                allCandidates={filteredCandidates}
-                filters={filters} 
-                setFilters={setFilters} 
-                selectedIds={selectedIds} 
-                setSelectedIds={setSelectedIds} 
-                currentPage={currentPage}
-                totalPages={totalPages}
-                itemsPerPage={itemsPerPage}
-                onPageChange={setCurrentPage}
-                onUploadClick={() => setActiveTab('upload')}
-                onCandidateClick={handleCandidateClick}
-              />
+              <div className="flex-1 flex flex-col h-full">
+                {syncing && (
+                  <div className="px-6 py-2 text-xs text-indigo-700 bg-indigo-50 border-b border-indigo-100">
+                    正在后台同步简历数据：已加载 <span className="font-medium">{syncStats.totalLoaded}</span> 条（第{' '}
+                    <span className="font-medium">{syncStats.pagesLoaded}</span> 页）…
+                  </div>
+                )}
+                <ResumeList 
+                  candidates={paginatedCandidates}
+                  allCandidates={filteredCandidates}
+                  filters={filters} 
+                  setFilters={setFilters} 
+                  selectedIds={selectedIds} 
+                  setSelectedIds={setSelectedIds} 
+                  currentPage={currentPage}
+                  totalPages={totalPages}
+                  itemsPerPage={itemsPerPage}
+                  onPageChange={setCurrentPage}
+                  onUploadClick={() => setActiveTab('upload')}
+                  onCandidateClick={handleCandidateClick}
+                />
+              </div>
             )}
           </div>
         )}
@@ -432,9 +459,9 @@ const ResumeApp = () => {
         {activeTab === 'jobs' && !selectedCandidateId && <JobList />}
         {activeTab === 'upload' && !selectedCandidateId && <UploadCenter onViewClick={() => setActiveTab('resumes')} />}
         {activeTab === 'profile' && !selectedCandidateId && <UserProfile />}
+        {activeTab === 'users' && !selectedCandidateId && <UserManagement />}
       </main>
     </div>
   );
-};
+}
 
-export default ResumeApp;

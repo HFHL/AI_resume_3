@@ -1,3 +1,5 @@
+'use client';
+
 import React from 'react';
 import { 
   Search, Trash2, Download, User, Briefcase, GraduationCap, MapPin, 
@@ -5,7 +7,7 @@ import {
 } from 'lucide-react';
 import { Tag } from './Tag';
 import { Pagination } from './Pagination';
-import { Candidate, FilterState } from '../types';
+import { Candidate, FilterState } from '@/types';
 
 interface ResumeListProps {
   candidates: Candidate[];
@@ -166,3 +168,4 @@ export const ResumeList: React.FC<ResumeListProps> = ({
     </div>
   );
 };
+
