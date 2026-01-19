@@ -71,7 +71,7 @@ export const ResumeList: React.FC<ResumeListProps> = ({
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={18} />
               <input 
                 type="text" 
-                placeholder="搜索姓名、公司、职位、技能、工作经历、项目经历..." 
+                placeholder="多关键词用空格分隔，如：前端 React 深圳" 
                 value={filters.search} 
                 onChange={(e) => setFilters({...filters, search: e.target.value})} 
                 className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 outline-none" 

@@ -197,11 +197,12 @@ export default function ResumeApp() {
       }
 
       if (filters.search) {
-        const q = filters.search.trim();
-        if (!q) return true; // 空搜索返回所有
+        const searchText = filters.search.trim();
+        if (!searchText) return true; // 空搜索返回所有
         
-        // 对于中文搜索，不转换为小写（保持原样）
-        const qLower = q.toLowerCase();
+        // 支持多关键词搜索：用空格分隔，所有关键词都必须匹配（AND 逻辑）
+        const keywords = searchText.split(/\s+/).filter(k => k.length > 0);
+        if (keywords.length === 0) return true;
         
         // 搜索所有字段（中文字段保持原样，英文字段转小写）
         const searchFields = [
@@ -241,27 +242,22 @@ export default function ResumeApp() {
           ])
         ];
         
-        // 检查搜索关键词是否在任何字段中
-        // 对于中文字符，直接匹配；对于英文字符，不区分大小写
-        const matches = searchFields.some(field => {
-          if (!field) return false;
-          // 如果搜索词包含中文字符，直接匹配
-          if (/[\u4e00-\u9fa5]/.test(q)) {
-            return field.includes(q);
+        // 把所有字段合并成一个大文本，方便搜索
+        const fullText = searchFields.join(' ');
+        const fullTextLower = fullText.toLowerCase();
+        
+        // 检查每个关键词是否都能匹配（AND 逻辑）
+        const allKeywordsMatch = keywords.every(keyword => {
+          const keywordLower = keyword.toLowerCase();
+          // 如果关键词包含中文字符，直接匹配原文
+          if (/[\u4e00-\u9fa5]/.test(keyword)) {
+            return fullText.includes(keyword);
           }
           // 否则不区分大小写匹配
-          return field.toLowerCase().includes(qLower);
+          return fullTextLower.includes(keywordLower);
         });
         
-        if (!matches) {
-          // 调试：如果没匹配到，记录原因
-          if (c.name && (c.name.includes('俞勇') || c.name.includes('Renee'))) {
-            console.log(`Candidate ${c.name} did not match search "${q}"`, {
-              name: c.name,
-              nameIncludes: c.name.includes(q),
-              searchFields: searchFields.slice(0, 5) // 只显示前5个字段
-            });
-          }
+        if (!allKeywordsMatch) {
           return false;
         }
       }
