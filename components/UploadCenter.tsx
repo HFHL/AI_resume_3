@@ -16,6 +16,7 @@ export const UploadCenter: React.FC<UploadCenterProps> = ({ onViewClick }) => {
   const [uploads, setUploads] = useState<Upload[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
+  const [retryingId, setRetryingId] = useState<string | null>(null); // 正在重试的记录ID
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Fetch uploads
@@ -70,6 +71,35 @@ export const UploadCenter: React.FC<UploadCenterProps> = ({ onViewClick }) => {
     if (status === 'SUCCESS') return 'success';
     if (status === 'FAILED') return 'failed';
     return 'processing'; // PENDING, OCR_DONE, etc.
+  };
+
+  const retryUpload = async (uploadId: string) => {
+    setRetryingId(uploadId);
+    try {
+      const { error } = await supabase
+        .from('resume_uploads')
+        .update({ 
+          status: 'PENDING', 
+          error_reason: null,
+          ocr_content: null 
+        })
+        .eq('id', uploadId);
+
+      if (error) throw error;
+      
+      // 立即更新本地状态，给用户即时反馈
+      setUploads(prev => prev.map(u => 
+        u.id === uploadId 
+          ? { ...u, status: 'processing' as const, error: undefined }
+          : u
+      ));
+      
+    } catch (err: any) {
+      console.error('Retry failed:', err);
+      alert('重试失败: ' + (err.message || '未知错误'));
+    } finally {
+      setRetryingId(null);
+    }
   };
 
   const formatFileSize = (bytes: number) => {
@@ -130,7 +160,8 @@ export const UploadCenter: React.FC<UploadCenterProps> = ({ onViewClick }) => {
             file_size: file.size,
             oss_raw_path: filePath,
             status: 'PENDING',
-            uploader_email: user.email // Save email!
+            uploader_email: user.email, // Save email as fallback
+            uploader_name: displayName || null // Save display name (preferred)
           });
 
         if (dbError) throw dbError;
@@ -204,18 +235,18 @@ export const UploadCenter: React.FC<UploadCenterProps> = ({ onViewClick }) => {
           
           <div className="flex items-center gap-2">
             {[
-              { id: 'all', label: '全部' },
-              { id: 'success', label: '成功' },
-              { id: 'processing', label: '进行中' },
-              { id: 'failed', label: '失败' }
+              { id: 'all', label: '全部', icon: null },
+              { id: 'success', label: '✅ 成功', color: 'green' },
+              { id: 'processing', label: '🔄 解析中', color: 'amber' },
+              { id: 'failed', label: '❌ 失败', color: 'red' }
             ].map(filter => (
               <button 
                 key={filter.id}
                 onClick={() => setUploadStatusFilter(filter.id)}
-                className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+                className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
                   uploadStatusFilter === filter.id 
-                    ? 'bg-indigo-100 text-indigo-700' 
-                    : 'text-gray-500 hover:bg-gray-100'
+                    ? 'bg-indigo-100 text-indigo-700 border border-indigo-200' 
+                    : 'text-gray-500 hover:bg-gray-100 border border-transparent'
                 }`}
               >
                 {filter.label}
@@ -265,19 +296,58 @@ export const UploadCenter: React.FC<UploadCenterProps> = ({ onViewClick }) => {
                         </div>
                       </td>
                       <td className="px-6 py-4">
-                        {file.status === 'success' && <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700"><CheckCircle size={12}/> 解析成功</span>}
-                        {file.status === 'processing' && <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700"><Loader2 size={12} className="animate-spin"/> 解析中</span>}
-                        {file.status === 'failed' && <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-700" title={file.error}><AlertCircle size={12}/> 解析失败</span>}
+                        {file.status === 'success' && (
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-green-100 text-green-700 border border-green-200">
+                            <CheckCircle size={14}/> ✅ 解析成功
+                          </span>
+                        )}
+                        {file.status === 'processing' && (
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-amber-100 text-amber-700 border border-amber-200">
+                            <Loader2 size={14} className="animate-spin"/> 🔄 解析中...
+                          </span>
+                        )}
+                        {file.status === 'failed' && (
+                          <div className="flex flex-col gap-1">
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-red-100 text-red-700 border border-red-200">
+                              <AlertCircle size={14}/> ❌ 解析失败
+                            </span>
+                            {file.error && (
+                              <span className="text-[10px] text-red-500 max-w-[150px] truncate" title={file.error}>
+                                {file.error}
+                              </span>
+                            )}
+                          </div>
+                        )}
                       </td>
                       <td className="px-6 py-4 text-gray-500">{file.date}</td>
                       <td className="px-6 py-4 text-right">
                         {file.status === 'failed' ? (
-                            <button className="text-gray-500 hover:text-indigo-600 font-medium text-xs flex items-center gap-1 ml-auto">
-                              <RefreshCw size={14}/> 重试
+                            <button 
+                              onClick={() => retryUpload(file.id)}
+                              disabled={retryingId === file.id}
+                              className={`font-medium text-xs flex items-center gap-1.5 ml-auto px-3 py-1.5 rounded-lg transition-all ${
+                                retryingId === file.id 
+                                  ? 'bg-orange-100 text-orange-400 cursor-not-allowed' 
+                                  : 'bg-orange-50 text-orange-600 hover:bg-orange-100 hover:text-orange-700 border border-orange-200'
+                              }`}
+                            >
+                              {retryingId === file.id ? (
+                                <>
+                                  <Loader2 size={14} className="animate-spin"/> 提交中...
+                                </>
+                              ) : (
+                                <>
+                                  <RefreshCw size={14}/> 重试
+                                </>
+                              )}
                             </button>
+                        ) : file.status === 'processing' ? (
+                            <span className="text-xs text-gray-400 flex items-center gap-1 ml-auto">
+                              <Clock size={14}/> 等待中
+                            </span>
                         ) : (
-                            <button className="text-indigo-600 hover:text-indigo-900 font-medium text-xs flex items-center gap-1 ml-auto" onClick={onViewClick}>
-                              <Eye size={14}/> 查看
+                            <button className="text-indigo-600 hover:text-indigo-900 font-medium text-xs flex items-center gap-1.5 ml-auto hover:bg-indigo-50 px-3 py-1.5 rounded-lg transition-colors border border-indigo-200" onClick={onViewClick}>
+                              <Eye size={14}/> 查看简历
                             </button>
                         )}
                       </td>

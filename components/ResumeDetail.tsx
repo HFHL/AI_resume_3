@@ -84,7 +84,7 @@ export const ResumeDetail: React.FC<ResumeDetailProps> = ({ onBack, candidateId 
             candidate_tags (
               tags (tag_name, category)
             ),
-            resume_uploads (id, filename, oss_raw_path, status, error_reason, updated_at)
+            resume_uploads (id, filename, oss_raw_path, status, error_reason, updated_at, uploader_email, created_at)
           `)
           .eq('id', candidateId)
           .single();
@@ -449,6 +449,27 @@ export const ResumeDetail: React.FC<ResumeDetailProps> = ({ onBack, candidateId 
             {/* File Management & Repair */}
             <SectionTitle title="原始文件与修复" icon={Wrench} />
             <div className="bg-white border border-gray-200 rounded-lg p-4 space-y-3">
+              {/* 上传人信息 */}
+              <div className="flex items-center gap-4 p-3 bg-indigo-50 rounded-lg border border-indigo-100">
+                <div className="w-8 h-8 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center text-sm font-bold">
+                  {(uploadData?.uploader_name || uploadData?.uploader_email || 'U').charAt(0).toUpperCase()}
+                </div>
+                <div>
+                  <div className="text-xs text-indigo-600 font-medium">上传人</div>
+                  <div className="text-sm text-gray-900 font-medium">
+                    {uploadData?.uploader_name || uploadData?.uploader_email || '未知'}
+                  </div>
+                  {uploadData?.uploader_name && uploadData?.uploader_email && (
+                    <div className="text-xs text-gray-500">{uploadData.uploader_email}</div>
+                  )}
+                </div>
+                <div className="ml-auto text-right">
+                  <div className="text-xs text-indigo-600 font-medium">上传时间</div>
+                  <div className="text-sm text-gray-700">
+                    {uploadData?.created_at ? new Date(uploadData.created_at).toLocaleString() : '-'}
+                  </div>
+                </div>
+              </div>
               <div className="text-xs text-gray-500">
                 上传记录状态：<span className="font-medium text-gray-900">{uploadData?.status || '-'}</span>
                 {uploadData?.error_reason ? (
