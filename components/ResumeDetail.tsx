@@ -84,7 +84,7 @@ export const ResumeDetail: React.FC<ResumeDetailProps> = ({ onBack, candidateId 
             candidate_tags (
               tags (tag_name, category)
             ),
-            resume_uploads (id, filename, oss_raw_path, status, error_reason, updated_at, uploader_email, created_at)
+            resume_uploads (id, filename, oss_raw_path, status, error_reason, updated_at, uploader_email, uploader_name, created_at)
           `)
           .eq('id', candidateId)
           .single();

@@ -76,11 +76,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const applyProfileState = (p: UserProfile | null) => {
+  // Bootstrap super admin emails (same as database function is_bootstrap_super_admin)
+  const BOOTSTRAP_SUPER_ADMIN_EMAILS = ['1563478934@qq.com', 'feiyuzi51@gmail.com'];
+
+  const applyProfileState = (p: UserProfile | null, userEmail?: string | null) => {
     setProfile(p);
     setApprovalStatus((p?.approval_status as any) || null);
     setRole((p?.role as any) || null);
-    setIsAdmin(Boolean(p && p.approval_status === 'approved' && (p.role === 'admin' || p.role === 'super_admin')));
+    
+    // Check if user is admin:
+    // 1. Bootstrap super admin by email (always admin, regardless of profile)
+    // 2. Or profile has approved status + admin/super_admin role
+    const isBootstrapAdmin = userEmail && BOOTSTRAP_SUPER_ADMIN_EMAILS.includes(userEmail.toLowerCase());
+    const isProfileAdmin = Boolean(p && p.approval_status === 'approved' && (p.role === 'admin' || p.role === 'super_admin'));
+    
+    setIsAdmin(isBootstrapAdmin || isProfileAdmin);
     if (p?.display_name) setDisplayName(p.display_name);
   };
 
@@ -92,7 +102,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setUser(u);
       setDisplayName(deriveDisplayName(u));
       const p = await fetchProfile(u);
-      applyProfileState(p);
+      applyProfileState(p, u?.email);
       setLoading(false);
     });
 
@@ -103,7 +113,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setUser(u);
       setDisplayName(deriveDisplayName(u));
       const p = await fetchProfile(u);
-      applyProfileState(p);
+      applyProfileState(p, u?.email);
       setLoading(false);
     });
 
@@ -126,7 +136,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // Enforce approval: if not approved, immediately sign out and block.
     const { data: { user: u } } = await supabase.auth.getUser();
     const p = await fetchProfile(u ?? null);
-    applyProfileState(p);
+    applyProfileState(p, u?.email);
 
     if (!p) {
       await supabase.auth.signOut();
@@ -201,7 +211,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           .eq('user_id', u.id);
         if (pErr) console.warn('profiles display_name update failed:', pErr.message);
         const p = await fetchProfile(u);
-        applyProfileState(p);
+        applyProfileState(p, u?.email);
       }
     }
 

@@ -13,6 +13,7 @@ interface UploadCenterProps {
 export const UploadCenter: React.FC<UploadCenterProps> = ({ onViewClick }) => {
   const { user, displayName } = useAuth();
   const [uploadStatusFilter, setUploadStatusFilter] = useState<string>('all'); // 'all', 'success', 'processing', 'failed'
+  const [timeFilter, setTimeFilter] = useState<string>('today'); // 'today', 'week', 'all'
   const [uploads, setUploads] = useState<Upload[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
@@ -185,9 +186,39 @@ export const UploadCenter: React.FC<UploadCenterProps> = ({ onViewClick }) => {
   };
 
   const filteredUploads = useMemo(() => {
-    if (uploadStatusFilter === 'all') return uploads;
-    return uploads.filter(u => u.status === uploadStatusFilter);
-  }, [uploadStatusFilter, uploads]);
+    let result = uploads;
+    
+    // 时间筛选
+    if (timeFilter !== 'all') {
+      const now = new Date();
+      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const weekAgo = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
+      
+      result = result.filter(u => {
+        const uploadDate = new Date(u.date);
+        if (timeFilter === 'today') {
+          return uploadDate >= today;
+        } else if (timeFilter === 'week') {
+          return uploadDate >= weekAgo;
+        }
+        return true;
+      });
+    }
+    
+    // 状态筛选
+    if (uploadStatusFilter !== 'all') {
+      result = result.filter(u => u.status === uploadStatusFilter);
+    }
+    
+    return result;
+  }, [uploadStatusFilter, timeFilter, uploads]);
+  
+  // 统计今日上传数量
+  const todayCount = useMemo(() => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    return uploads.filter(u => new Date(u.date) >= today).length;
+  }, [uploads]);
 
   const handleUploadClick = () => {
     fileInputRef.current?.click();
@@ -228,30 +259,68 @@ export const UploadCenter: React.FC<UploadCenterProps> = ({ onViewClick }) => {
 
       {/* Upload History */}
       <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden flex-1 flex flex-col">
-        <div className="px-6 py-4 border-b border-gray-100 bg-gray-50/50 flex justify-between items-center flex-wrap gap-4">
-          <h3 className="font-bold text-gray-800 flex items-center gap-2">
-            <Clock size={16} /> 上传记录
-          </h3>
+        <div className="px-6 py-4 border-b border-gray-100 bg-gray-50/50">
+          <div className="flex justify-between items-center flex-wrap gap-4">
+            <div className="flex items-center gap-4">
+              <h3 className="font-bold text-gray-800 flex items-center gap-2">
+                <Clock size={16} /> 上传记录
+              </h3>
+              {/* 今日统计 */}
+              <div className="flex items-center gap-2 px-3 py-1.5 bg-indigo-50 rounded-lg border border-indigo-100">
+                <span className="text-xs text-indigo-600">📅 今日上传</span>
+                <span className="text-sm font-bold text-indigo-700">{todayCount}</span>
+                <span className="text-xs text-indigo-500">份</span>
+              </div>
+            </div>
+            
+            {/* 时间筛选 */}
+            <div className="flex items-center gap-2">
+              {[
+                { id: 'today', label: '📅 今天' },
+                { id: 'week', label: '📆 本周' },
+                { id: 'all', label: '📋 全部' }
+              ].map(filter => (
+                <button 
+                  key={filter.id}
+                  onClick={() => setTimeFilter(filter.id)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                    timeFilter === filter.id 
+                      ? 'bg-indigo-600 text-white shadow-sm' 
+                      : 'text-gray-600 hover:bg-gray-100 border border-gray-200'
+                  }`}
+                >
+                  {filter.label}
+                </button>
+              ))}
+            </div>
+          </div>
           
-          <div className="flex items-center gap-2">
+          {/* 状态筛选 */}
+          <div className="flex items-center gap-2 mt-3 pt-3 border-t border-gray-100">
+            <span className="text-xs text-gray-500 mr-2">按状态：</span>
             {[
-              { id: 'all', label: '全部', icon: null },
-              { id: 'success', label: '✅ 成功', color: 'green' },
-              { id: 'processing', label: '🔄 解析中', color: 'amber' },
-              { id: 'failed', label: '❌ 失败', color: 'red' }
+              { id: 'all', label: '全部' },
+              { id: 'success', label: '✅ 成功' },
+              { id: 'processing', label: '🔄 解析中' },
+              { id: 'failed', label: '❌ 失败' }
             ].map(filter => (
               <button 
                 key={filter.id}
                 onClick={() => setUploadStatusFilter(filter.id)}
                 className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
                   uploadStatusFilter === filter.id 
-                    ? 'bg-indigo-100 text-indigo-700 border border-indigo-200' 
-                    : 'text-gray-500 hover:bg-gray-100 border border-transparent'
+                    ? 'bg-gray-800 text-white' 
+                    : 'text-gray-500 hover:bg-gray-100 border border-gray-200'
                 }`}
               >
                 {filter.label}
               </button>
             ))}
+            
+            {/* 显示筛选结果数量 */}
+            <span className="ml-auto text-xs text-gray-400">
+              共 <span className="font-medium text-gray-700">{filteredUploads.length}</span> 条记录
+            </span>
           </div>
         </div>
         
