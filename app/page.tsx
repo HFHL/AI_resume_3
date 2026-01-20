@@ -52,36 +52,42 @@ export default function ResumeApp() {
         return (data || []).map((item: any) => {
           // Get latest work experience for title and company
           const works = item.candidate_work_experiences || [];
-          const latestWork = works.length > 0 ? works[0] : null; // Assuming order or just taking first found
+          const latestWork = works.length > 0 ? works[0] : null;
 
           // Get highest/first education
           const edus = item.candidate_educations || [];
           const mainEdu = edus.length > 0 ? edus[0] : null;
 
-          // Extract tags
-          const tags = (item.candidate_tags || []).map((t: any) => t.tags?.tag_name).filter(Boolean);
+          // Extract candidate tags (AI tagged)
+          const candidateTags = (item.candidate_tags || []).map((t: any) => ({
+            id: t.tags?.id || 0,
+            tag_name: t.tags?.tag_name || '',
+            category: t.tags?.category || ''
+          })).filter((t: any) => t.tag_name);
+
+          // Extract tag names for skills display
+          const tagNames = candidateTags.map((t: any) => t.tag_name);
 
           return {
             id: item.id,
             name: (item.name && item.name.trim()) || 'Unknown',
-            avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${item.id}`, // Generate avatar based on ID
+            avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${item.id}`,
             title: latestWork?.role || '待定职位',
             work_years: item.work_years || 0,
             degree: item.degree_level || mainEdu?.degree || '未知',
             phone: item.phone,
-            email: item.email || '', // 允许 email 为空字符串
+            email: item.email || '',
             school: {
               name: mainEdu?.school || '未填写',
               tags: mainEdu?.school_tags || []
             },
             company: latestWork?.company || '未填写',
-            company_tags: [], // DB doesn't have company tags yet, leave empty or infer
-            is_outsourcing: false, // DB doesn't have this field on candidate level easily available without logic
+            company_tags: [],
+            is_outsourcing: false,
             location: item.location || '未知',
-            skills: tags,
-            match_score: Math.floor(Math.random() * 40) + 60, // Random score for demo
+            skills: tagNames,
+            match_score: Math.floor(Math.random() * 40) + 60,
             last_active: new Date(item.updated_at).toLocaleDateString(),
-            // 扩展字段用于搜索
             work_experiences: works.map((w: any) => ({
               company: w.company || '',
               role: w.role || '',
@@ -101,7 +107,8 @@ export default function ResumeApp() {
               role: p.role || '',
               description: p.description || ''
             })),
-            self_evaluation: item.self_evaluation || ''
+            self_evaluation: item.self_evaluation || '',
+            tags: candidateTags
           };
         });
       };

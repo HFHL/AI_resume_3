@@ -264,7 +264,25 @@ export const ResumeDetail: React.FC<ResumeDetailProps> = ({ onBack, candidateId 
   const latestWork = candidate.candidate_work_experiences?.[0];
   const headline = `${latestWork?.role || '待定职位'} | ${candidate.work_years || 0}年经验 | ${latestWork?.company || '未填写公司'}`;
   const skills = candidate.candidate_tags?.map((t: any) => t.tags?.tag_name).filter(Boolean) || [];
-  
+
+  // AI 打标标签（带分类）
+  const aiTags = candidate.candidate_tags?.map((t: any) => ({
+    tag_name: t.tags?.tag_name || '',
+    category: t.tags?.category || ''
+  })).filter((t: any) => t.tag_name) || [];
+
+  // 根据分类获取标签颜色
+  const getTagColor = (category: string) => {
+    const colors: Record<string, { bg: string; text: string; border: string }> = {
+      tech: { bg: 'bg-blue-50', text: 'text-blue-700', border: 'border-blue-200' },
+      non_tech: { bg: 'bg-green-50', text: 'text-green-700', border: 'border-green-200' },
+      web3: { bg: 'bg-purple-50', text: 'text-purple-700', border: 'border-purple-200' },
+      quant: { bg: 'bg-amber-50', text: 'text-amber-700', border: 'border-amber-200' },
+      ai: { bg: 'bg-rose-50', text: 'text-rose-700', border: 'border-rose-200' },
+    };
+    return colors[category] || { bg: 'bg-gray-50', text: 'text-gray-700', border: 'border-gray-200' };
+  };
+
   // Safe access to filename
   const filename = uploadData?.filename || '未找到文件';
 
@@ -417,16 +435,26 @@ export const ResumeDetail: React.FC<ResumeDetailProps> = ({ onBack, candidateId 
               <InfoItem icon={MapPin} label="现居地" value={candidate.location} />
             </div>
 
-            {/* Skills */}
-            {skills.length > 0 && (
+            {/* AI 打标标签 */}
+            {aiTags.length > 0 && (
               <div className="mb-8">
-                <h3 className="font-bold text-gray-900 mb-3 text-sm">技能标签</h3>
+                <h3 className="font-bold text-gray-900 mb-3 text-sm flex items-center gap-2">
+                  <span>AI 打标</span>
+                  <span className="text-xs font-normal text-gray-400 bg-gray-100 px-2 py-0.5 rounded">基于简历内容自动识别</span>
+                </h3>
                 <div className="flex flex-wrap gap-2">
-                  {skills.map((skill: string) => (
-                    <span key={skill} className="px-3 py-1.5 bg-gray-100 text-gray-700 rounded text-sm font-medium border border-gray-200">
-                      {skill}
-                    </span>
-                  ))}
+                  {aiTags.map((tag: any, idx: number) => {
+                    const colors = getTagColor(tag.category);
+                    return (
+                      <span
+                        key={idx}
+                        className={`px-3 py-1.5 rounded text-sm font-medium border ${colors.bg} ${colors.text} ${colors.border}`}
+                        title={tag.category}
+                      >
+                        {tag.tag_name}
+                      </span>
+                    );
+                  })}
                 </div>
               </div>
             )}

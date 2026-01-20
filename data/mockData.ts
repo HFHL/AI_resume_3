@@ -137,7 +137,38 @@ export const MOCK_UPLOADS: Upload[] = [
 ];
 
 export const AVAILABLE_TAGS = {
-  tech: ['Java', 'Python', 'Go', 'C++', 'React', 'Vue', 'Spring Boot', 'K8s'],
-  business: ['DeFi', 'Tokenomics', 'Machine Learning', 'Alpha Strategy', 'English']
+  tech: [
+    // 技术栈
+    'java', 'go', 'python', 'rust', 'c++',
+    '后端', '前端', '全栈', '架构师', 'cto', 'sre',
+    'android', '安卓', 'ios', 'flutter', 'cocos',
+    '运维', '测试', 'dba', '数据开发', '数据分析',
+    '区块链开发', '合约', 'solidity', '密码学', '安全',
+    '量化开发', '量化策略',
+    // AI
+    'ai', 'ai agent', '大模型', '大语言模型', 'rag',
+    '生成式ai', '多模态', '向量数据库', 'langchain', '智能体',
+  ],
+  business: [
+    // 非技术
+    '市场', '运营', '增长', 'cmo', 'pr', '公关', '销售', 'bd',
+    '产品', '设计', '行政', '法务', '风控', '合规', 'devrel',
+    '投资', '项目经理', '财务', '会计', '上币', 'listing',
+    // Web3 交易
+    '合约', '现货', '返佣', 'perp', 'perpetual', 'dex', 'defi',
+    '质押', '借贷', 'lending', 'staking', 'restaking', '理财',
+    // Web3 生态
+    'evm', 'ethereum', 'eth', 'btc', 'solana', 'ton', 'tg生态',
+    '波卡', 'polkadot', 'cosmos',
+    // Web3 其他
+    'layer1', 'layer2', 'zk', 'op', 'rollup', 'rpc', '钱包',
+    '支付', 'amm', 'mev', '挖矿', 'tokenomics', '铭文', 'meme',
+    '法币', 'c2c', 'did', 'indexer', '大客户', 'vip', '高净值',
+    '家办', '机构',
+    // 金融量化
+    '做市', '交易', '低延迟', '套利', '回测', '订单簿', '撮合',
+    '滑点', '流动性', '期权', '衍生品', '永续', '期货', '杠杆',
+    '网格', '外汇', '日内', '波段',
+  ]
 };
 

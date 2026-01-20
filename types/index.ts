@@ -45,6 +45,20 @@ export interface Candidate {
   educations?: Education[];
   projects?: Project[];
   self_evaluation?: string;
+  // AI 打标标签
+  tags?: CandidateTag[];
+}
+
+export interface CandidateTag {
+  id: number;
+  tag_name: string;
+  category: string;
+}
+
+export interface Tag {
+  id: number;
+  tag_name: string;
+  category: 'tech' | 'non_tech' | 'web3' | 'quant' | 'ai' | string;
 }
 
 export interface Job {

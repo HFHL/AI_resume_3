@@ -1,13 +1,25 @@
 'use client';
 
 import React from 'react';
-import { 
-  Search, Trash2, Download, User, Briefcase, GraduationCap, MapPin, 
-  Phone, Building2, MoreHorizontal 
+import {
+  Search, Trash2, Download, User, Briefcase, GraduationCap, MapPin,
+  Phone, Building2, MoreHorizontal
 } from 'lucide-react';
 import { Tag } from './Tag';
 import { Pagination } from './Pagination';
-import { Candidate, FilterState } from '@/types';
+import { Candidate, FilterState, CandidateTag } from '@/types';
+
+// 根据分类获取标签颜色
+const getTagColor = (category: string): { bg: string; text: string; border: string } => {
+  const colors: Record<string, { bg: string; text: string; border: string }> = {
+    tech: { bg: 'bg-blue-50', text: 'text-blue-700', border: 'border-blue-200' },
+    non_tech: { bg: 'bg-green-50', text: 'text-green-700', border: 'border-green-200' },
+    web3: { bg: 'bg-purple-50', text: 'text-purple-700', border: 'border-purple-200' },
+    quant: { bg: 'bg-amber-50', text: 'text-amber-700', border: 'border-amber-200' },
+    ai: { bg: 'bg-rose-50', text: 'text-rose-700', border: 'border-rose-200' },
+  };
+  return colors[category] || { bg: 'bg-gray-50', text: 'text-gray-700', border: 'border-gray-200' };
+};
 
 interface ResumeListProps {
   candidates: Candidate[];
@@ -142,9 +154,21 @@ export const ResumeList: React.FC<ResumeListProps> = ({
                     {c.is_outsourcing && <span className="text-[10px] bg-pink-100 text-pink-600 px-1.5 py-0.5 rounded border border-pink-200">外包</span>}
                     {c.company_tags.map(tag => <span key={tag} className="text-[10px] bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded border border-blue-200">{tag}</span>)}
                   </div>
-                  <div className="flex flex-wrap items-center">
+                  <div className="flex flex-wrap items-center gap-1">
                     {c.school.tags.map(t => <Tag key={t} text={t} type="school" size="xs" />)}
-                    {c.skills.map(s => <Tag key={s} text={s} type="tech" size="xs" />)}
+                    {/* AI 打标标签 */}
+                    {c.tags?.map((tag: CandidateTag) => {
+                      const colors = getTagColor(tag.category);
+                      return (
+                        <span
+                          key={tag.id}
+                          className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium border ${colors.bg} ${colors.text} ${colors.border}`}
+                          title={tag.category}
+                        >
+                          {tag.tag_name}
+                        </span>
+                      );
+                    })}
                   </div>
                 </div>
                 <div className="flex flex-row md:flex-col justify-end md:justify-center gap-2 border-t md:border-t-0 md:border-l border-gray-100 pt-3 md:pt-0 md:pl-4 mt-2 md:mt-0">
