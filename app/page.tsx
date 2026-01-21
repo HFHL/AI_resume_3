@@ -9,6 +9,7 @@ import { JobList } from '@/components/JobList';
 import { UploadCenter } from '@/components/UploadCenter';
 import { UserProfile } from '@/components/UserProfile';
 import { UserManagement } from '@/components/UserManagement';
+import { ProcessingStats } from '@/components/ProcessingStats';
 import { Login } from '@/components/Login';
 import { useAuth } from '@/contexts/AuthContext';
 import { FilterState, Candidate } from '@/types';
@@ -353,6 +354,7 @@ export default function ResumeApp() {
                   {id: 'resumes', label: '简历管理'}, 
                   {id: 'jobs', label: '职位匹配'}, 
                   {id: 'upload', label: '上传中心'},
+                  ...(isAdmin ? [{ id: 'stats', label: '处理统计' }] : []),
                   ...(isAdmin ? [{ id: 'users', label: '用户管理' }] : []),
                 ].map(tab => (
                   <button 
@@ -462,6 +464,7 @@ export default function ResumeApp() {
         {activeTab === 'jobs' && !selectedCandidateId && <JobList />}
         {activeTab === 'upload' && !selectedCandidateId && <UploadCenter onViewClick={() => setActiveTab('resumes')} />}
         {activeTab === 'profile' && !selectedCandidateId && <UserProfile />}
+        {activeTab === 'stats' && !selectedCandidateId && <ProcessingStats />}
         {activeTab === 'users' && !selectedCandidateId && <UserManagement />}
       </main>
     </div>
