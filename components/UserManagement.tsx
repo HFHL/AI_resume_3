@@ -173,6 +173,10 @@ const UserListCard = ({
         ) : (
           rows.map((u) => {
             const busy = actingId === u.user_id;
+            const status = String((u as any).approval_status || '').trim().toLowerCase();
+            const canToggleLogin = status !== 'pending' && status !== '';
+            const isApproved = status === 'approved';
+            const isRejected = status === 'rejected';
             return (
               <div key={u.user_id} className="px-5 py-4">
                 <div className="flex items-start justify-between gap-3">
@@ -188,6 +192,7 @@ const UserListCard = ({
                   </div>
 
                   <div className="flex items-center gap-2 shrink-0">
+                    {/* 待审批用户：显示通过/拒绝按钮 */}
                     {showApprovalActions && (
                       <>
                         <button
@@ -209,11 +214,42 @@ const UserListCard = ({
                       </>
                     )}
 
+                    {/* 启用 / 禁用账号（控制是否允许登录）
+                        注意：有些历史数据可能存在大小写/空格导致判断不命中，这里统一做 trim+lower 并加兜底。
+                     */}
+                    {canToggleLogin && (
+                      <button
+                        disabled={busy}
+                        onClick={() => (isApproved ? onReject(u.user_id) : onApprove(u.user_id))}
+                        className={
+                          isApproved
+                            ? 'px-3 py-1.5 rounded-lg bg-red-100 text-red-700 hover:bg-red-200 border border-red-200 disabled:opacity-60 flex items-center gap-1.5 text-xs'
+                            : 'px-3 py-1.5 rounded-lg bg-green-100 text-green-700 hover:bg-green-200 border border-green-200 disabled:opacity-60 flex items-center gap-1.5 text-xs'
+                        }
+                        title={
+                          isApproved
+                            ? '禁用账号（该用户将无法再登录）'
+                            : isRejected
+                              ? '启用账号（允许该用户重新登录）'
+                              : `切换登录状态（当前 status=${status || '-'})`
+                        }
+                      >
+                        {busy ? (
+                          <Loader2 size={14} className="animate-spin" />
+                        ) : isApproved ? (
+                          <XCircle size={14} />
+                        ) : (
+                          <CheckCircle size={14} />
+                        )}
+                        {isApproved ? '禁用账号' : '启用账号'}
+                      </button>
+                    )}
+
                     <button
                       disabled={busy}
                       onClick={() => onSetRole(u.user_id, u.role === 'admin' ? 'user' : 'admin')}
                       className="px-3 py-1.5 rounded-lg border border-gray-300 hover:bg-gray-50 disabled:opacity-60 flex items-center gap-1.5 text-xs text-gray-700"
-                      title="授予/取消管理员"
+                      title="授予/取消管理员权限（不影响登录，仅影响是否有管理权限）"
                     >
                       {busy ? <Loader2 size={14} className="animate-spin" /> : <Shield size={14} />}
                       {u.role === 'admin' ? '取消管理员' : '设为管理员'}
