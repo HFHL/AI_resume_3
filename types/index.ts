@@ -94,6 +94,7 @@ export interface Upload {
   error?: string;
   date: string;
   uploader_email?: string;
+  candidate_id?: string; // 关联的候选人 ID（解析成功后才有）
 }
 
 export type UserRole = 'user' | 'admin' | 'super_admin';

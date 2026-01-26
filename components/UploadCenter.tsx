@@ -7,7 +7,7 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 
 interface UploadCenterProps {
-  onViewClick: () => void;
+  onViewClick: (candidateId: string) => void;
 }
 
 export const UploadCenter: React.FC<UploadCenterProps> = ({ onViewClick }) => {
@@ -41,10 +41,13 @@ export const UploadCenter: React.FC<UploadCenterProps> = ({ onViewClick }) => {
     if (!user) return;
     try {
       setLoading(true);
-      // Fetch uploads only for the current user
+      // Fetch uploads with related candidate info
       const { data, error } = await supabase
         .from('resume_uploads')
-        .select('*')
+        .select(`
+          *,
+          candidates (id)
+        `)
         .eq('user_id', user.id) // Filter by current user ID
         .order('created_at', { ascending: false });
 
@@ -57,7 +60,8 @@ export const UploadCenter: React.FC<UploadCenterProps> = ({ onViewClick }) => {
         status: mapStatus(item.status),
         error: item.error_reason,
         date: new Date(item.created_at).toLocaleString(),
-        uploader_email: item.uploader_email
+        uploader_email: item.uploader_email,
+        candidate_id: item.candidates?.[0]?.id || item.candidates?.id || undefined
       }));
 
       setUploads(formattedUploads);
@@ -414,10 +418,17 @@ export const UploadCenter: React.FC<UploadCenterProps> = ({ onViewClick }) => {
                             <span className="text-xs text-gray-400 flex items-center gap-1 ml-auto">
                               <Clock size={14}/> 等待中
                             </span>
-                        ) : (
-                            <button className="text-indigo-600 hover:text-indigo-900 font-medium text-xs flex items-center gap-1.5 ml-auto hover:bg-indigo-50 px-3 py-1.5 rounded-lg transition-colors border border-indigo-200" onClick={onViewClick}>
+                        ) : file.candidate_id ? (
+                            <button 
+                              className="text-indigo-600 hover:text-indigo-900 font-medium text-xs flex items-center gap-1.5 ml-auto hover:bg-indigo-50 px-3 py-1.5 rounded-lg transition-colors border border-indigo-200" 
+                              onClick={() => onViewClick(file.candidate_id!)}
+                            >
                               <Eye size={14}/> 查看简历
                             </button>
+                        ) : (
+                            <span className="text-xs text-gray-400 flex items-center gap-1 ml-auto">
+                              暂无数据
+                            </span>
                         )}
                       </td>
                     </tr>
