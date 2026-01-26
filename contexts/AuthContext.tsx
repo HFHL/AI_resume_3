@@ -33,16 +33,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [isAdmin, setIsAdmin] = useState(false);
   const [loading, setLoading] = useState(true);
 
-  const deriveDisplayName = (u: User | null): string | null => {
-    if (!u) return null;
-    const meta: any = (u as any).user_metadata || {};
-    const dn = typeof meta.display_name === 'string' ? meta.display_name.trim() : '';
-    if (dn) return dn;
-    const fullName = typeof meta.full_name === 'string' ? meta.full_name.trim() : '';
-    if (fullName) return fullName;
-    return null;
-  };
-
   const fetchProfile = async (u: User | null): Promise<UserProfile | null> => {
     if (!u) return null;
     try {
@@ -91,7 +81,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const isProfileAdmin = Boolean(p && p.approval_status === 'approved' && (p.role === 'admin' || p.role === 'super_admin'));
     
     setIsAdmin(isBootstrapAdmin || isProfileAdmin);
-    if (p?.display_name) setDisplayName(p.display_name);
+    // 统一只从 profiles 表获取 display_name
+    setDisplayName(p?.display_name || null);
   };
 
   useEffect(() => {
@@ -100,7 +91,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setSession(session);
       const u = session?.user ?? null;
       setUser(u);
-      setDisplayName(deriveDisplayName(u));
       const p = await fetchProfile(u);
       applyProfileState(p, u?.email);
       setLoading(false);
@@ -111,7 +101,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setSession(session);
       const u = session?.user ?? null;
       setUser(u);
-      setDisplayName(deriveDisplayName(u));
       const p = await fetchProfile(u);
       applyProfileState(p, u?.email);
       setLoading(false);
@@ -158,14 +147,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
-      options: {
-        data: {
-          display_name: displayName.trim(),
-        },
-      },
     });
 
-    // Create a pending profile row for approval workflow (best-effort).
+    // 只在 profiles 表存储 display_name
     if (!error && data?.user) {
       try {
         const payload = {
@@ -194,25 +178,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const trimmed = newDisplayName.trim();
     if (!trimmed) return { error: new Error('显示名称不能为空') };
 
-    const { data, error } = await supabase.auth.updateUser({
-      data: { display_name: trimmed },
-    });
+    if (!user?.id) return { error: new Error('用户未登录') };
+
+    // 只更新 profiles 表
+    const { error } = await supabase
+      .from('profiles')
+      .update({ display_name: trimmed })
+      .eq('user_id', user.id);
 
     if (!error) {
-      const u = data?.user ?? user;
-      setUser(u ?? null);
       setDisplayName(trimmed);
-
-      // Keep profiles table in sync (best-effort). Requires RLS allow own update.
-      if (u?.id) {
-        const { error: pErr } = await supabase
-          .from('profiles')
-          .update({ display_name: trimmed })
-          .eq('user_id', u.id);
-        if (pErr) console.warn('profiles display_name update failed:', pErr.message);
-        const p = await fetchProfile(u);
-        applyProfileState(p, u?.email);
-      }
+      const p = await fetchProfile(user);
+      applyProfileState(p, user?.email);
     }
 
     return { error };
