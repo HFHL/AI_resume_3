@@ -1,7 +1,6 @@
 'use client';
 
 import { useState, useMemo, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
 import { Loader2 } from 'lucide-react';
 import { MainLayout } from '@/components/MainLayout';
 import { FilterSidebar } from '@/components/FilterSidebar';
@@ -11,7 +10,6 @@ import { FilterState, Candidate } from '@/types';
 import { supabase } from '@/lib/supabase';
 
 export default function ResumesPage() {
-  const router = useRouter();
   const { user } = useAuth();
 
   const [candidates, setCandidates] = useState<Candidate[]>([]);
@@ -263,7 +261,9 @@ export default function ResumesPage() {
   };
 
   const handleCandidateClick = (id: string) => {
-    router.push(`/resumes/${id}`);
+    const url = `/resumes/${id}`;
+    const w = window.open(url, '_blank', 'noopener,noreferrer');
+    if (w) w.opener = null;
   };
 
   return (
@@ -301,7 +301,7 @@ export default function ResumesPage() {
               totalPages={totalPages}
               itemsPerPage={itemsPerPage}
               onPageChange={setCurrentPage}
-              onUploadClick={() => router.push('/upload')}
+              onUploadClick={() => (window.location.href = '/upload')}
               onCandidateClick={handleCandidateClick}
             />
           </div>

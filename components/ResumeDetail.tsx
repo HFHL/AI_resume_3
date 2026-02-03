@@ -204,7 +204,7 @@ export const ResumeDetail: React.FC<ResumeDetailProps> = ({ onBack, candidateId 
       alert('未找到上传记录（resume_uploads）');
       return;
     }
-    if (!confirm('确定要重新 OCR 吗？这会把状态重置为 PENDING，等待后端 Pipeline 重新处理。')) return;
+    if (!confirm('确定要重新解析吗？这会重新执行 OCR 识别和 AI 结构化解析。')) return;
     setRepairing(true);
     try {
       const { error } = await supabase
@@ -212,7 +212,7 @@ export const ResumeDetail: React.FC<ResumeDetailProps> = ({ onBack, candidateId 
         .update({ status: 'PENDING', error_reason: null, ocr_content: null })
         .eq('id', uploadData.id);
       if (error) throw error;
-      alert('已提交重新 OCR（PENDING）。请等待后端 Pipeline 处理。');
+      alert('已提交重新解析，请等待后端处理完成。');
     } catch (e: any) {
       console.error('rerunOCR failed:', e);
       alert(e?.message || '提交失败');
@@ -475,7 +475,7 @@ export const ResumeDetail: React.FC<ResumeDetailProps> = ({ onBack, candidateId 
             </div>
 
             {/* File Management & Repair */}
-            <SectionTitle title="原始文件与修复" icon={Wrench} />
+            <SectionTitle title="原始文件" icon={Wrench} />
             <div className="bg-white border border-gray-200 rounded-lg p-4 space-y-3">
               {/* 上传人信息 */}
               <div className="flex items-center gap-4 p-3 bg-indigo-50 rounded-lg border border-indigo-100">
@@ -498,55 +498,24 @@ export const ResumeDetail: React.FC<ResumeDetailProps> = ({ onBack, candidateId 
                   </div>
                 </div>
               </div>
-              <div className="text-xs text-gray-500">
-                上传记录状态：<span className="font-medium text-gray-900">{uploadData?.status || '-'}</span>
-                {uploadData?.error_reason ? (
-                  <span className="ml-2 text-red-600">失败原因：{uploadData.error_reason}</span>
-                ) : null}
-              </div>
-              <div>
-                <div className="text-xs text-gray-500 mb-1">oss_raw_path（可手动修复）</div>
-                <input
-                  value={fileForm.oss_raw_path}
-                  onChange={e => setFileForm({ oss_raw_path: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
-                  placeholder="例如：userId/xxx.pdf 或 https://.../object/public/resumes/xxx"
-                />
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <button
-                  onClick={saveFilePath}
-                  disabled={repairing}
-                  className="px-3 py-2 rounded-lg bg-indigo-600 text-white text-sm hover:bg-indigo-700 disabled:opacity-60"
-                >
-                  保存文件路径
-                </button>
-                <button
-                  onClick={refreshPreviewUrl}
-                  disabled={repairing}
-                  className="px-3 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm hover:bg-gray-50 disabled:opacity-60 flex items-center gap-2"
-                >
-                  <RefreshCcw size={14} /> 刷新预览链接
-                </button>
+              
+              {/* 重新解析按钮 */}
+              <div className="flex items-center justify-between pt-2">
+                <div className="text-xs text-gray-500">
+                  状态：<span className="font-medium text-gray-900">{uploadData?.status || '-'}</span>
+                  {uploadData?.error_reason && (
+                    <span className="ml-2 text-red-600">· {uploadData.error_reason}</span>
+                  )}
+                </div>
                 <button
                   onClick={rerunOCR}
                   disabled={repairing}
-                  className="px-3 py-2 rounded-lg border border-orange-300 text-orange-700 text-sm hover:bg-orange-50 disabled:opacity-60"
-                  title="把 resume_uploads.status 置为 PENDING"
+                  className="px-4 py-2 rounded-lg bg-orange-500 text-white text-sm hover:bg-orange-600 disabled:opacity-60 flex items-center gap-2"
+                  title="重新运行 OCR 和解析流程"
                 >
-                  重新 OCR
-                </button>
-                <button
-                  onClick={rerunParse}
-                  disabled={repairing}
-                  className="px-3 py-2 rounded-lg border border-blue-300 text-blue-700 text-sm hover:bg-blue-50 disabled:opacity-60"
-                  title="把 resume_uploads.status 置为 OCR_DONE"
-                >
+                  {repairing ? <Loader2 size={14} className="animate-spin" /> : <RefreshCcw size={14} />}
                   重新解析
                 </button>
-              </div>
-              <div className="text-xs text-gray-500">
-                说明：以上"重新 OCR/解析"会把状态改回待处理，需后端 <code>full_pipeline_test.py</code> 在跑，才会自动执行。
               </div>
             </div>
 
