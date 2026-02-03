@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { Loader2 } from 'lucide-react';
 import { MainLayout } from '@/components/MainLayout';
 import { FilterSidebar } from '@/components/FilterSidebar';
@@ -8,31 +8,50 @@ import { ResumeList } from '@/components/ResumeList';
 import { useAuth } from '@/contexts/AuthContext';
 import { FilterState, Candidate } from '@/types';
 import { supabase } from '@/lib/supabase';
+import { loadResumeListState, saveResumeListState } from '@/lib/resumeState';
+
+// 全局数据缓存（模块级，避免切换标签时丢失）
+// 缓存永久有效，除非用户手动刷新浏览器
+let cachedCandidates: Candidate[] = [];
+let cachedSyncStats = { pagesLoaded: 0, totalLoaded: 0 };
 
 export default function ResumesPage() {
   const { user } = useAuth();
+  const isInitialMount = useRef(true);
 
-  const [candidates, setCandidates] = useState<Candidate[]>([]);
+  // 从 sessionStorage 恢复状态
+  const savedState = loadResumeListState();
+  const [candidates, setCandidates] = useState<Candidate[]>(cachedCandidates);
   const [loading, setLoading] = useState<boolean>(false);
   const [syncing, setSyncing] = useState<boolean>(false);
-  const [syncStats, setSyncStats] = useState<{ pagesLoaded: number; totalLoaded: number }>({
-    pagesLoaded: 0,
-    totalLoaded: 0,
-  });
+  const [syncStats, setSyncStats] = useState<{ pagesLoaded: number; totalLoaded: number }>(
+    cachedCandidates.length > 0 ? cachedSyncStats : { pagesLoaded: 0, totalLoaded: 0 }
+  );
   const [error, setError] = useState<string | null>(null);
 
-  const [filters, setFilters] = useState<FilterState>({
-    search: '', degrees: [], schoolTags: [], minYears: '', companyTypes: [], tags: [], special: []
-  });
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [filters, setFilters] = useState<FilterState>(
+    savedState?.filters || {
+      search: '', degrees: [], schoolTags: [], minYears: '', companyTypes: [], tags: [], special: []
+    }
+  );
+  const [selectedIds, setSelectedIds] = useState<string[]>(savedState?.selectedIds || []);
+  const [currentPage, setCurrentPage] = useState<number>(savedState?.currentPage || 1);
   const [itemsPerPage] = useState<number>(10);
+
+  // 保存状态到 sessionStorage
+  useEffect(() => {
+    saveResumeListState({
+      currentPage,
+      filters,
+      selectedIds
+    });
+  }, [currentPage, filters, selectedIds]);
 
   // Fetch candidates from Supabase
   useEffect(() => {
     if (!user) return;
 
-    const fetchCandidates = async () => {
+    const fetchCandidates = async (isBackground = false) => {
       let cancelled = false;
 
       const formatCandidates = (data: any[]): Candidate[] => {
@@ -95,9 +114,13 @@ export default function ResumesPage() {
         });
       };
 
-      setLoading(true);
+      if (!isBackground) {
+        setLoading(true);
+      }
       setSyncing(false);
-      setSyncStats({ pagesLoaded: 0, totalLoaded: 0 });
+      if (!isBackground) {
+        setSyncStats({ pagesLoaded: 0, totalLoaded: 0 });
+      }
       setError(null);
 
       try {
@@ -125,12 +148,18 @@ export default function ResumesPage() {
         const firstFormatted = formatCandidates(first.data || []);
         if (!cancelled) {
           setCandidates(firstFormatted);
-          setSyncStats({ pagesLoaded: 1, totalLoaded: firstFormatted.length });
-          setLoading(false);
+          cachedCandidates = firstFormatted;
+          const newStats = { pagesLoaded: 1, totalLoaded: firstFormatted.length };
+          setSyncStats(newStats);
+          cachedSyncStats = newStats;
+          if (!isBackground) {
+            setLoading(false);
+          }
         }
 
         if ((first.data || []).length >= PAGE_SIZE) {
-          if (!cancelled) setSyncing(true);
+          // 只有在非后台刷新时才显示同步提示
+          if (!cancelled && !isBackground) setSyncing(true);
           let page = 1;
           let hasMore = true;
 
@@ -149,30 +178,56 @@ export default function ResumesPage() {
             }
 
             const formatted = formatCandidates(rows);
-            setCandidates(prev => [...prev, ...formatted]);
-            setSyncStats(prev => ({
-              pagesLoaded: prev.pagesLoaded + 1,
-              totalLoaded: prev.totalLoaded + formatted.length,
-            }));
+            setCandidates(prev => {
+              const updated = [...prev, ...formatted];
+              cachedCandidates = updated;
+              return updated;
+            });
+            setSyncStats(prev => {
+              const newStats = {
+                pagesLoaded: prev.pagesLoaded + 1,
+                totalLoaded: prev.totalLoaded + formatted.length,
+              };
+              cachedSyncStats = newStats;
+              return newStats;
+            });
 
             if (rows.length < PAGE_SIZE) hasMore = false;
             page += 1;
           }
 
-          if (!cancelled) setSyncing(false);
+          if (!cancelled && !isBackground) setSyncing(false);
         } else {
-          if (!cancelled) setSyncing(false);
+          if (!cancelled && !isBackground) setSyncing(false);
         }
       } catch (err: any) {
         console.error('Error fetching candidates:', err);
         if (!cancelled) {
           setError(err.message);
-          setLoading(false);
+          if (!isBackground) {
+            setLoading(false);
+            setSyncing(false);
+          }
         }
       }
     };
 
-    fetchCandidates();
+    // 如果有缓存，直接使用，不自动刷新
+    if (cachedCandidates.length > 0 && isInitialMount.current) {
+      console.log('Using cached candidates (no auto-refresh)');
+      setCandidates(cachedCandidates);
+      setSyncStats(cachedSyncStats);
+      setLoading(false);
+      isInitialMount.current = false;
+      // 不进行后台刷新，保持缓存数据
+      return;
+    }
+    
+    // 首次加载或缓存为空时才获取数据
+    if (isInitialMount.current) {
+      fetchCandidates();
+      isInitialMount.current = false;
+    }
   }, [user]);
 
   const filteredCandidates = useMemo(() => {
@@ -251,8 +306,15 @@ export default function ResumesPage() {
 
   const totalPages = Math.ceil(filteredCandidates.length / itemsPerPage);
 
+  // 筛选条件变化时，重置到第1页
+  const lastFilterKeyRef = useRef<string>('');
   useEffect(() => {
-    setCurrentPage(1);
+    const filterKey = JSON.stringify(filters);
+    // 只有当筛选条件真正变化时才重置页码（避免初始化时重置）
+    if (filterKey !== lastFilterKeyRef.current && lastFilterKeyRef.current !== '') {
+      setCurrentPage(1);
+    }
+    lastFilterKeyRef.current = filterKey;
   }, [filters]);
 
   const handleResetFilters = () => {

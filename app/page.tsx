@@ -12,9 +12,9 @@ export default function HomePage() {
     router.replace('/resumes');
   }, [router]);
 
-  return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50">
-      <Loader2 size={48} className="animate-spin text-indigo-500" />
-    </div>
-  );
-}
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <Loader2 size={48} className="animate-spin text-indigo-500" />
+      </div>
+    );
+  }
