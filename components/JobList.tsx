@@ -21,6 +21,21 @@ export const JobList: React.FC = () => {
   const [matchRows, setMatchRows] = useState<
     { candidate_id: string; match_score: number; matched_keywords: string[]; total_keywords: number }[]
   >([]);
+  const [matchCandidateById, setMatchCandidateById] = useState<
+    Record<
+      string,
+      {
+        id: string;
+        name: string | null;
+        degree_level: string | null;
+        work_years: number | null;
+        location: string | null;
+        latest_company: string | null;
+        latest_role: string | null;
+        updated_at: string | null;
+      }
+    >
+  >({});
 
   const [form, setForm] = useState({
     title: '',
@@ -75,6 +90,7 @@ export const JobList: React.FC = () => {
     setIsMatchOpen(true);
     setMatchError(null);
     setMatchRows([]);
+    setMatchCandidateById({});
     setMatchLoading(true);
     try {
       const { data, error } = await supabase.rpc('match_candidates_for_position', {
@@ -83,7 +99,43 @@ export const JobList: React.FC = () => {
         p_offset: 0
       });
       if (error) throw error;
-      setMatchRows((data || []) as any);
+      const rows = (data || []) as any[];
+      setMatchRows(rows as any);
+
+      // 批量补充候选人基础信息（用于展示）
+      const ids = rows.map(r => r.candidate_id).filter(Boolean);
+      if (ids.length > 0) {
+        const { data: candRows, error: candErr } = await supabase
+          .from('candidates')
+          .select(`
+            id,
+            name,
+            degree_level,
+            work_years,
+            location,
+            updated_at,
+            candidate_work_experiences (company, role)
+          `)
+          .in('id', ids);
+        if (candErr) throw candErr;
+
+        const map: Record<string, any> = {};
+        (candRows || []).forEach((c: any) => {
+          const works = c.candidate_work_experiences || [];
+          const latest = works.length > 0 ? works[0] : null;
+          map[c.id] = {
+            id: c.id,
+            name: c.name || null,
+            degree_level: c.degree_level || null,
+            work_years: c.work_years ?? null,
+            location: c.location || null,
+            latest_company: latest?.company || null,
+            latest_role: latest?.role || null,
+            updated_at: c.updated_at || null,
+          };
+        });
+        setMatchCandidateById(map);
+      }
     } catch (e: any) {
       console.error('match_candidates_for_position failed:', e);
       setMatchError(e?.message || '匹配失败（请确认已在数据库执行 migration/函数已创建）');
@@ -98,6 +150,13 @@ export const JobList: React.FC = () => {
     setMatchingPos(null);
     setMatchRows([]);
     setMatchError(null);
+    setMatchCandidateById({});
+  };
+
+  const openCandidateInNewTab = (candidateId: string) => {
+    const url = `/resumes/${candidateId}`;
+    const w = window.open(url, '_blank', 'noopener,noreferrer');
+    if (w) w.opener = null;
   };
 
   const parseKeywords = (text: string): string[] => {
@@ -464,11 +523,42 @@ export const JobList: React.FC = () => {
                   </div>
                 ) : (
                   <div className="space-y-3">
-                    {matchRows.map(r => (
+                    {matchRows.map(r => {
+                      const info = matchCandidateById[r.candidate_id];
+                      const name = info?.name || '未命名';
+                      const headlineParts = [
+                        info?.latest_role,
+                        info?.latest_company,
+                        info?.work_years != null ? `${info.work_years}年` : null,
+                        info?.degree_level,
+                        info?.location,
+                      ].filter(Boolean);
+                      const headline = headlineParts.join(' · ');
+
+                      return (
                       <div key={r.candidate_id} className="border border-gray-200 rounded-lg p-4">
                         <div className="flex items-center justify-between">
-                          <div className="text-sm text-gray-900 font-medium">
-                            Candidate ID: <code>{r.candidate_id}</code>
+                          <div className="text-sm text-gray-900 font-medium flex items-center gap-2 min-w-0">
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2 min-w-0">
+                                <div className="font-bold text-gray-900 truncate">{name}</div>
+                                <span className="text-xs text-gray-400 shrink-0">ID</span>
+                                <button
+                                  onClick={() => openCandidateInNewTab(r.candidate_id)}
+                                  className="text-indigo-600 hover:text-indigo-700 hover:underline truncate"
+                                  title="新开标签页打开简历"
+                                >
+                                  <code>{r.candidate_id}</code>
+                                </button>
+                              </div>
+                              {headline && <div className="text-xs text-gray-500 mt-1 truncate">{headline}</div>}
+                            </div>
+                            <button
+                              onClick={() => openCandidateInNewTab(r.candidate_id)}
+                              className="px-3 py-1.5 rounded-lg border border-indigo-200 text-indigo-700 hover:bg-indigo-50 text-xs font-medium shrink-0"
+                            >
+                              打开简历
+                            </button>
                           </div>
                           <div className="text-sm font-bold text-indigo-600">
                             {(r.match_score * 100).toFixed(0)}%
@@ -488,7 +578,7 @@ export const JobList: React.FC = () => {
                           )}
                         </div>
                       </div>
-                    ))}
+                    )})}
                   </div>
                 )}
               </div>
