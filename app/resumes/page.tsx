@@ -14,6 +14,7 @@ import { loadResumeListState, saveResumeListState } from '@/lib/resumeState';
 // 缓存永久有效，除非用户手动刷新浏览器
 let cachedCandidates: Candidate[] = [];
 let cachedSyncStats = { pagesLoaded: 0, totalLoaded: 0 };
+let cachedForUserId: string | null = null;
 
 export default function ResumesPage() {
   const { user } = useAuth();
@@ -149,6 +150,7 @@ export default function ResumesPage() {
         if (!cancelled) {
           setCandidates(firstFormatted);
           cachedCandidates = firstFormatted;
+          cachedForUserId = user.id;
           const newStats = { pagesLoaded: 1, totalLoaded: firstFormatted.length };
           setSyncStats(newStats);
           cachedSyncStats = newStats;
@@ -181,6 +183,7 @@ export default function ResumesPage() {
             setCandidates(prev => {
               const updated = [...prev, ...formatted];
               cachedCandidates = updated;
+              cachedForUserId = user.id;
               return updated;
             });
             setSyncStats(prev => {
@@ -212,18 +215,19 @@ export default function ResumesPage() {
       }
     };
 
-    // 如果有缓存，直接使用，不自动刷新
-    if (cachedCandidates.length > 0 && isInitialMount.current) {
-      console.log('Using cached candidates (no auto-refresh)');
+    // 如果有缓存，先展示缓存，然后后台静默刷新，避免新解析成功的简历搜索不到
+    const cacheBelongsToCurrentUser = cachedForUserId === user.id;
+    if (cachedCandidates.length > 0 && cacheBelongsToCurrentUser && isInitialMount.current) {
+      console.log('Using cached candidates and refreshing in background');
       setCandidates(cachedCandidates);
       setSyncStats(cachedSyncStats);
       setLoading(false);
       isInitialMount.current = false;
-      // 不进行后台刷新，保持缓存数据
+      fetchCandidates(true);
       return;
     }
     
-    // 首次加载或缓存为空时才获取数据
+    // 首次加载、缓存为空或缓存用户不匹配时获取数据
     if (isInitialMount.current) {
       fetchCandidates();
       isInitialMount.current = false;
@@ -308,6 +312,12 @@ export default function ResumesPage() {
 
   // 筛选条件变化时，重置到第1页
   const lastFilterKeyRef = useRef<string>('');
+  // Initialize the lastFilterKeyRef with the initial filters to ensure
+  // the first real user change will trigger a page reset.
+  useEffect(() => {
+    lastFilterKeyRef.current = JSON.stringify(filters);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   useEffect(() => {
     const filterKey = JSON.stringify(filters);
     // 只有当筛选条件真正变化时才重置页码（避免初始化时重置）
