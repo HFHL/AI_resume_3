@@ -136,7 +136,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({ children, hideHeader = f
         </header>
       )}
 
-      <main className="flex-1 w-full flex overflow-hidden">
+      <main className="flex-1 w-full flex overflow-auto">
         {children}
       </main>
     </div>

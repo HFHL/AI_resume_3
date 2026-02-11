@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { CheckCircle, XCircle, Shield, Loader2, RefreshCw } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
@@ -36,6 +37,8 @@ export const UserManagement: React.FC = () => {
     fetchUsers();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAdmin]);
+
+  const router = useRouter();
 
   const pending = useMemo(() => rows.filter(r => r.approval_status === 'pending'), [rows]);
   const approved = useMemo(() => rows.filter(r => r.approval_status === 'approved'), [rows]);
@@ -76,7 +79,7 @@ export const UserManagement: React.FC = () => {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h2 className="text-2xl font-bold text-gray-900">用户管理（注册审批）</h2>
-          <p className="text-gray-500 mt-1">查看待审批用户，支持通过/拒绝与授予管理员</p>
+          <p className="text-gray-500 mt-1">查看待审批用户，支持通过/拒绝与授予管理员；点击头像可查看其上传记录</p>
         </div>
         <button
           onClick={fetchUsers}
@@ -103,6 +106,7 @@ export const UserManagement: React.FC = () => {
           onReject={(id) => setApproval(id, 'rejected')}
           onSetRole={setRole}
           showApprovalActions
+          onOpenUploads={(id: string) => router.push(`/upload?userId=${id}`)}
         />
         <UserListCard
           title={`已通过（${approved.length}）`}
@@ -111,6 +115,7 @@ export const UserManagement: React.FC = () => {
           onApprove={(id) => setApproval(id, 'approved')}
           onReject={(id) => setApproval(id, 'rejected')}
           onSetRole={setRole}
+          onOpenUploads={(id: string) => router.push(`/upload?userId=${id}`)}
         />
         <UserListCard
           title={`已拒绝（${rejected.length}）`}
@@ -119,6 +124,7 @@ export const UserManagement: React.FC = () => {
           onApprove={(id) => setApproval(id, 'approved')}
           onReject={(id) => setApproval(id, 'rejected')}
           onSetRole={setRole}
+          onOpenUploads={(id: string) => router.push(`/upload?userId=${id}`)}
         />
       </div>
     </div>
@@ -153,6 +159,7 @@ const UserListCard = ({
   onReject,
   onSetRole,
   showApprovalActions,
+  onOpenUploads,
 }: {
   title: string;
   rows: UserProfile[];
@@ -161,6 +168,7 @@ const UserListCard = ({
   onReject: (id: string) => void;
   onSetRole: (id: string, role: UserRole) => void;
   showApprovalActions?: boolean;
+  onOpenUploads?: (id: string) => void;
 }) => {
   return (
     <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
@@ -180,14 +188,25 @@ const UserListCard = ({
             return (
               <div key={u.user_id} className="px-5 py-4">
                 <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="font-medium text-gray-900 truncate">{u.display_name}</div>
+                  <div className="min-w-0 flex items-start gap-3">
+                    <button
+                      onClick={() => onOpenUploads?.(u.user_id)}
+                      className="w-9 h-9 rounded-full bg-indigo-100 text-indigo-700 font-bold text-sm flex items-center justify-center hover:bg-indigo-200 transition-colors shrink-0"
+                      title={`查看 ${u.display_name || '该用户'} 的上传记录`}
+                    >
+                      {(u.display_name || u.email || 'U').charAt(0).toUpperCase()}
+                    </button>
+                    <div className="min-w-0">
+                    <div className="font-medium text-gray-900 truncate">
+                      {u.display_name}
+                    </div>
                     <div className="text-xs text-gray-500 truncate" title={u.email || ''}>
                       {u.email || '-'}
                     </div>
                     <div className="mt-2 flex items-center gap-2">
                       <StatusBadge status={u.approval_status} />
                       <RoleBadge role={u.role} />
+                    </div>
                     </div>
                   </div>
 

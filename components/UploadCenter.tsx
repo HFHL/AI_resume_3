@@ -5,25 +5,31 @@ import { UploadCloud, Clock, FileText, CheckCircle, Loader2, AlertCircle, Refres
 import { Upload } from '@/types';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
+import { useSearchParams } from 'next/navigation';
 
 interface UploadCenterProps {
   onViewClick: (candidateId: string) => void;
 }
 
 export const UploadCenter: React.FC<UploadCenterProps> = ({ onViewClick }) => {
-  const { user, displayName } = useAuth();
+  const { user, displayName, isAdmin } = useAuth();
   const [uploadStatusFilter, setUploadStatusFilter] = useState<string>('all'); // 'all', 'success', 'processing', 'failed'
   const [timeFilter, setTimeFilter] = useState<string>('today'); // 'today', 'week', 'all'
-  const [uploads, setUploads] = useState<Upload[]>([]);
+  type LocalUpload = Upload & { uploader_name?: string };
+  const [uploads, setUploads] = useState<LocalUpload[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [retryingId, setRetryingId] = useState<string | null>(null); // 正在重试的记录ID
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const searchParams = useSearchParams();
+  const requestedUserParam = searchParams?.get('userId') || user?.id || null;
+  const [resolvedDisplayName, setResolvedDisplayName] = useState<string | null>(null);
+  const [effectiveViewedUserId, setEffectiveViewedUserId] = useState<string | null>(null);
 
   // Fetch uploads
   useEffect(() => {
     fetchUploads();
-    
+
     // Subscribe to changes
     const subscription = supabase
       .channel('resume_uploads_changes')
@@ -35,25 +41,59 @@ export const UploadCenter: React.FC<UploadCenterProps> = ({ onViewClick }) => {
     return () => {
       subscription.unsubscribe();
     };
-  }, [user]);
+  }, [user, requestedUserParam, isAdmin]);
 
   const fetchUploads = async () => {
     if (!user) return;
     try {
       setLoading(true);
+
+      // Non-admin users can only view their own uploads.
+      let targetUserId = user.id;
+      try {
+        const raw = searchParams?.get('userId') || searchParams?.get('user') || searchParams?.get('name') || null;
+        if (raw && raw !== user.id) {
+          if (!isAdmin) {
+            // Force fallback to self for non-admin users.
+            targetUserId = user.id;
+            setResolvedDisplayName(null);
+          } else {
+            const { data: profiles, error: profileErr } = await supabase
+              .from('profiles')
+              .select('user_id,display_name')
+              .eq('display_name', raw)
+              .limit(1);
+            if (profileErr) console.debug('fetchUploads: profile lookup error', profileErr);
+            if (profiles && profiles.length > 0) {
+              targetUserId = profiles[0].user_id;
+              setResolvedDisplayName(profiles[0].display_name || null);
+            } else {
+              // treat raw as user id
+              setResolvedDisplayName(null);
+              targetUserId = raw;
+            }
+          }
+        } else {
+          setResolvedDisplayName(null);
+        }
+      } catch (err) {
+        console.error('fetchUploads: error resolving profile', err);
+      }
+
       // Fetch uploads with related candidate info
+      console.debug('fetchUploads: querying resume_uploads for user', targetUserId);
       const { data, error } = await supabase
         .from('resume_uploads')
         .select(`
           *,
           candidates (id)
         `)
-        .eq('user_id', user.id) // Filter by current user ID
+        .eq('user_id', targetUserId)
         .order('created_at', { ascending: false });
 
       if (error) throw error;
 
-      const formattedUploads: Upload[] = (data || []).map((item: any) => ({
+      const formattedUploads: LocalUpload[] = (data || []).map((item: any) => ({
         id: item.id,
         filename: item.filename,
         size: formatFileSize(item.file_size),
@@ -61,16 +101,20 @@ export const UploadCenter: React.FC<UploadCenterProps> = ({ onViewClick }) => {
         error: item.error_reason,
         date: new Date(item.created_at).toLocaleString(),
         uploader_email: item.uploader_email,
+        uploader_name: item.uploader_name,
         candidate_id: item.candidates?.[0]?.id || item.candidates?.id || undefined
       }));
 
       setUploads(formattedUploads);
+      setEffectiveViewedUserId(targetUserId);
     } catch (err) {
       console.error('Error fetching uploads:', err);
     } finally {
       setLoading(false);
     }
   };
+
+  
 
   const mapStatus = (status: string): Upload['status'] => {
     if (status === 'SUCCESS') return 'success';
@@ -229,7 +273,12 @@ export const UploadCenter: React.FC<UploadCenterProps> = ({ onViewClick }) => {
   };
 
   return (
-    <div className="flex flex-col h-full max-w-5xl mx-auto w-full p-8">
+    <div className="flex flex-col h-full max-w-6xl mx-auto w-full p-8">
+      {isAdmin && effectiveViewedUserId && effectiveViewedUserId !== user?.id && (
+        <div className="mb-4 p-3 rounded-lg bg-blue-50 border border-blue-100 text-sm text-blue-700">
+          正在查看用户 <span className="font-medium">{resolvedDisplayName || effectiveViewedUserId}</span> 的上传记录（管理员查看）。
+        </div>
+      )}
       <div className="mb-8">
         <h2 className="text-2xl font-bold text-gray-900">上传中心</h2>
         <p className="text-gray-500 mt-1">支持批量 PDF/Word 简历上传，AI 自动解析</p>
@@ -245,7 +294,7 @@ export const UploadCenter: React.FC<UploadCenterProps> = ({ onViewClick }) => {
       />
 
       {/* Upload Area */}
-      <div 
+      <div
         onClick={handleUploadClick}
         className={`bg-white border-2 border-dashed ${uploading ? 'border-indigo-300 bg-indigo-50' : 'border-indigo-100 hover:border-indigo-300 hover:bg-indigo-50/30'} rounded-xl p-10 flex flex-col items-center justify-center text-center transition-all cursor-pointer mb-10`}
       >
@@ -256,13 +305,13 @@ export const UploadCenter: React.FC<UploadCenterProps> = ({ onViewClick }) => {
         <p className="text-sm text-gray-500 mb-6 max-w-md">
           支持 PDF, DOCX 格式。AI 将自动进行 OCR 识别与结构化解析。
         </p>
-        <button className="bg-indigo-600 text-white px-6 py-2.5 rounded-lg font-medium hover:bg-indigo-700 shadow-sm transition-colors pointer-events-none">
+        <button className="bg-indigo-600 text-white px-6 py-2.5 rounded-lg font-medium hover:bg-indigo-700 shadow-sm transition-colors pointer-events-auto">
           {uploading ? '上传处理中...' : '选择文件'}
         </button>
       </div>
 
       {/* Upload History */}
-      <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden flex-1 flex flex-col">
+      <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden flex-1 flex flex-col min-h-[480px]">
         <div className="px-6 py-4 border-b border-gray-100 bg-gray-50/50">
           <div className="flex justify-between items-center flex-wrap gap-4">
             <div className="flex items-center gap-4">
@@ -328,13 +377,13 @@ export const UploadCenter: React.FC<UploadCenterProps> = ({ onViewClick }) => {
           </div>
         </div>
         
-        <div className="overflow-y-auto flex-1">
+        <div className="overflow-auto flex-1">
           {loading ? (
              <div className="flex justify-center items-center h-40 text-gray-400">
                <Loader2 size={24} className="animate-spin mr-2"/> 加载中...
              </div>
           ) : (
-            <table className="w-full text-sm text-left">
+            <table className="w-full min-w-full text-sm text-left table-auto">
               <thead className="text-xs text-gray-500 bg-gray-50 uppercase border-b border-gray-100">
                 <tr>
                   <th className="px-6 py-3 font-medium">文件名</th>
@@ -355,17 +404,17 @@ export const UploadCenter: React.FC<UploadCenterProps> = ({ onViewClick }) => {
                 ) : (
                   filteredUploads.map((file) => (
                     <tr key={file.id} className="hover:bg-gray-50 transition-colors">
-                      <td className="px-6 py-4 font-medium text-gray-900 flex items-center gap-2">
+                      <td className="px-6 py-4 font-medium text-gray-900 flex items-center gap-3">
                         <FileText size={16} className="text-gray-400" />
-                        <span className="truncate max-w-[200px]" title={file.filename}>{file.filename}</span>
+                        <span className="truncate max-w-[420px] block" title={file.filename}>{file.filename}</span>
                       </td>
                       <td className="px-6 py-4 text-gray-500">{file.size}</td>
                       <td className="px-6 py-4 text-gray-500">
-                        <div className="flex items-center gap-1.5" title={displayName || ''}>
+                        <div className="flex items-center gap-1.5" title={file.uploader_name || file.uploader_email || ''}>
                            <div className="w-5 h-5 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center text-[10px] font-bold">
-                             {(displayName || 'U').charAt(0).toUpperCase()}
+                             {(file.uploader_name || file.uploader_email || 'U').charAt(0).toUpperCase()}
                            </div>
-                           <span className="truncate max-w-[120px]">{displayName || '未设置'}</span>
+                           <span className="truncate max-w-[220px]">{file.uploader_name || file.uploader_email || '未设置'}</span>
                         </div>
                       </td>
                       <td className="px-6 py-4">
