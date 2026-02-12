@@ -38,20 +38,19 @@ export async function getStorageUrl(
     return null;
   }
 
-  // 如果传入的是完整 URL（例如以 http(s):// 开头），直接返回用于预览
-  if (/^https?:\/\//i.test(pathOrUrl)) {
-    return pathOrUrl;
-  }
-
   // 检查是否是完整 URL，如果是则提取路径和 bucket
   let actualPath = pathOrUrl;
   let detectedBucket: string | null = null;
-  
+  const isHttpUrl = /^https?:\/\//i.test(pathOrUrl);
+
   const urlInfo = extractPathFromUrl(pathOrUrl);
   if (urlInfo) {
     actualPath = urlInfo.path;
     detectedBucket = urlInfo.bucket;
     console.log(`检测到 URL 格式，提取路径: ${actualPath}, bucket: ${detectedBucket}`);
+  } else if (isHttpUrl) {
+    // 非 Supabase Storage URL 无法切换 bucket，按原链接返回
+    return pathOrUrl;
   }
 
   // 如果从 URL 中检测到 bucket，优先使用它

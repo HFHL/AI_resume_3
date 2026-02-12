@@ -49,7 +49,8 @@ export const ResumeDetail: React.FC<ResumeDetailProps> = ({ onBack, candidateId 
   const [isEditing, setIsEditing] = useState(false);
   const [candidate, setCandidate] = useState<any>(null);
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(true); // full data loading
+  const [initialLoading, setInitialLoading] = useState(true); // minimal data loaded
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [repairing, setRepairing] = useState(false);
@@ -71,67 +72,87 @@ export const ResumeDetail: React.FC<ResumeDetailProps> = ({ onBack, candidateId 
   useEffect(() => {
     if (!candidateId) return;
 
-    const fetchDetail = async () => {
-      setLoading(true);
+    const fetchMinimalAndRelated = async () => {
+      setInitialLoading(true);
+      setError(null);
       try {
-        const { data, error } = await supabase
+        // 1) Fetch minimal candidate payload (fast) to show header quickly
+        const { data: minimal, error: minErr } = await supabase
           .from('candidates')
           .select(`
-            *,
-            candidate_educations (*),
-            candidate_work_experiences (*),
-            candidate_projects (*),
-            candidate_tags (
-              tags (tag_name, category)
-            ),
-            resume_uploads (id, filename, oss_raw_path, status, error_reason, updated_at, uploader_email, uploader_name, created_at)
+            id,
+            name,
+            updated_at,
+            work_years,
+            degree_level,
+            location,
+            email,
+            phone,
+            self_evaluation,
+            resume_uploads (id, oss_raw_path, filename, created_at, uploader_email, uploader_name, status)
           `)
           .eq('id', candidateId)
-          .single();
+          .maybeSingle();
 
-        if (error) throw error;
-        setCandidate(data);
+        if (minErr) throw minErr;
 
-        // Handle resume_uploads being an array or object
-        const uploadData = Array.isArray(data.resume_uploads) ? data.resume_uploads[0] : data.resume_uploads;
-
-        // init edit form
+        // Set minimal candidate state so UI can render quickly
+        setCandidate(minimal || null);
         setEditForm({
-          name: data.name || '',
-          email: data.email || '',
-          phone: data.phone || '',
-          location: data.location || '',
-          degree_level: data.degree_level || '',
-          work_years: data.work_years != null ? String(data.work_years) : '',
-          self_evaluation: data.self_evaluation || ''
+          name: minimal?.name || '',
+          email: minimal?.email || '',
+          phone: minimal?.phone || '',
+          location: minimal?.location || '',
+          degree_level: minimal?.degree_level || '',
+          work_years: minimal?.work_years != null ? String(minimal.work_years) : '',
+          self_evaluation: minimal?.self_evaluation || ''
         });
 
-        // init file form
-        setFileForm({
-          oss_raw_path: uploadData?.oss_raw_path || ''
-        });
+        // init file form from minimal payload
+        const uploadData = Array.isArray(minimal?.resume_uploads) ? minimal.resume_uploads[0] : minimal?.resume_uploads;
+        setFileForm({ oss_raw_path: uploadData?.oss_raw_path || '' });
 
-        // Fetch PDF URL if path exists (支持新旧存储 fallback)
+        // Pre-fetch signed URL if available (do not block related fetches)
         if (uploadData?.oss_raw_path) {
-          const signedUrl = await getStorageUrl(uploadData.oss_raw_path, ['resumes', 'resume'], 3600);
-          if (signedUrl) {
-            setPdfUrl(signedUrl);
-          } else {
-            console.error('无法从新存储或旧存储获取 PDF URL');
-          }
-        } else {
-          console.warn('No oss_raw_path found in resume_uploads', data.resume_uploads);
+          getStorageUrl(uploadData.oss_raw_path, ['resumes', 'resume'], 3600).then((signedUrl) => {
+            if (signedUrl) setPdfUrl(signedUrl);
+          }).catch((e) => console.warn('getStorageUrl failed', e));
         }
+
+        setInitialLoading(false);
+
+        // 2) Fetch related collections in parallel (educations, works, projects, tags)
+        setLoading(true);
+        const [educRes, workRes, projRes, tagRes] = await Promise.all([
+          supabase.from('candidate_educations').select('*').eq('candidate_id', candidateId).order('start_date', { ascending: false }),
+          supabase.from('candidate_work_experiences').select('*').eq('candidate_id', candidateId).order('start_date', { ascending: false }),
+          supabase.from('candidate_projects').select('*').eq('candidate_id', candidateId).order('created_at', { ascending: false }),
+          supabase.from('candidate_tags').select('*, tags (tag_name, category)').eq('candidate_id', candidateId)
+        ]).catch((e) => {
+          console.warn('Related fetch error (non-fatal):', e);
+          return [ { data: null }, { data: null }, { data: null }, { data: null } ];
+        });
+
+        const full = {
+          ...(minimal || {}),
+          candidate_educations: (educRes?.data as any) || [],
+          candidate_work_experiences: (workRes?.data as any) || [],
+          candidate_projects: (projRes?.data as any) || [],
+          candidate_tags: (tagRes?.data as any) || []
+        };
+
+        setCandidate(full);
 
       } catch (err: any) {
         console.error('Error fetching candidate detail:', err);
-        setError(err.message);
+        setError(err?.message || '加载候选人信息失败');
       } finally {
         setLoading(false);
+        setInitialLoading(false);
       }
     };
 
-    fetchDetail();
+    fetchMinimalAndRelated();
   }, [candidateId]);
 
   const uploadData = useMemo(() => {
@@ -243,10 +264,56 @@ export const ResumeDetail: React.FC<ResumeDetailProps> = ({ onBack, candidateId 
     }
   };
 
-  if (loading) {
+  if (initialLoading) {
     return (
-      <div className="h-full flex items-center justify-center bg-gray-50">
-        <Loader2 size={32} className="animate-spin text-indigo-500" />
+      <div className="h-full bg-gray-50 flex flex-col font-sans text-gray-800 overflow-hidden w-full">
+        {/* Header skeleton */}
+        <header className="bg-white border-b border-gray-200 h-16 shrink-0 flex items-center justify-between px-6 shadow-sm z-20">
+          <div className="flex items-center gap-4">
+            <div className="w-10 h-10 bg-gray-200 rounded-full" />
+            <div className="space-y-1">
+              <div className="w-48 h-4 bg-gray-200 rounded" />
+              <div className="w-32 h-3 bg-gray-200 rounded" />
+            </div>
+          </div>
+          <div className="w-28 h-8 bg-gray-200 rounded" />
+        </header>
+
+        {/* Main skeleton */}
+        <div className="flex-1 flex gap-6 p-8">
+          <div className="flex-1 space-y-6">
+            <div className="flex gap-6">
+              <div className="w-24 h-24 bg-gray-200 rounded-xl" />
+              <div className="flex-1 space-y-3">
+                <div className="w-64 h-6 bg-gray-200 rounded" />
+                <div className="w-40 h-4 bg-gray-200 rounded" />
+                <div className="grid grid-cols-2 gap-3 mt-2">
+                  <div className="w-full h-10 bg-gray-200 rounded" />
+                  <div className="w-full h-10 bg-gray-200 rounded" />
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="h-12 bg-gray-200 rounded" />
+              <div className="h-12 bg-gray-200 rounded" />
+              <div className="h-12 bg-gray-200 rounded" />
+            </div>
+
+            <div className="space-y-4">
+              <div className="h-40 bg-gray-200 rounded" />
+              <div className="h-24 bg-gray-200 rounded" />
+              <div className="h-36 bg-gray-200 rounded" />
+            </div>
+          </div>
+
+          <div className="w-1/3 hidden lg:block">
+            <div className="h-12 bg-gray-200 rounded mb-4" />
+            <div className="bg-white border border-gray-200 rounded-lg shadow-sm p-4">
+              <div className="w-full h-[900px] bg-gray-200 rounded" />
+            </div>
+          </div>
+        </div>
       </div>
     );
   }
@@ -520,7 +587,7 @@ export const ResumeDetail: React.FC<ResumeDetailProps> = ({ onBack, candidateId 
             </div>
 
             {/* Work Experience */}
-            <SectionTitle title="工作经历" icon={Briefcase} action="添加经历" />
+            <SectionTitle title="工作经历" icon={Briefcase} action={loading ? '加载中...' : '添加经历'} />
             <div className="space-y-8 relative before:absolute before:left-[19px] before:top-2 before:bottom-2 before:w-0.5 before:bg-gray-200">
               {candidate.candidate_work_experiences?.map((work: any) => (
                 <div key={work.id} className="relative pl-10 group">
@@ -547,7 +614,7 @@ export const ResumeDetail: React.FC<ResumeDetailProps> = ({ onBack, candidateId 
             </div>
 
             {/* Projects */}
-            <SectionTitle title="项目经历" icon={Calendar} />
+            <SectionTitle title="项目经历" icon={Calendar} action={loading ? '加载中...' : undefined} />
             <div className="space-y-6 pl-4 border-l border-gray-200 ml-5">
               {candidate.candidate_projects?.map((proj: any) => (
                 <div key={proj.id} className="relative pl-6">
@@ -572,7 +639,7 @@ export const ResumeDetail: React.FC<ResumeDetailProps> = ({ onBack, candidateId 
             </div>
 
             {/* Education */}
-            <SectionTitle title="教育经历" icon={GraduationCap} action="添加" />
+            <SectionTitle title="教育经历" icon={GraduationCap} action={loading ? '加载中...' : '添加'} />
             <div className="space-y-4">
               {candidate.candidate_educations?.map((edu: any) => (
                 <div key={edu.id} className="flex justify-between items-center p-4 bg-white border border-gray-200 rounded-lg hover:shadow-sm transition-shadow">

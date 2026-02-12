@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { UploadCloud, Clock, FileText, CheckCircle, Loader2, AlertCircle, RefreshCw, Eye } from 'lucide-react';
+import { UploadCloud, Clock, FileText, CheckCircle, Loader2, AlertCircle, RefreshCw, Eye, Trash } from 'lucide-react';
 import { Upload } from '@/types';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
@@ -15,7 +15,7 @@ export const UploadCenter: React.FC<UploadCenterProps> = ({ onViewClick }) => {
   const { user, displayName, isAdmin } = useAuth();
   const [uploadStatusFilter, setUploadStatusFilter] = useState<string>('all'); // 'all', 'success', 'processing', 'failed'
   const [timeFilter, setTimeFilter] = useState<string>('today'); // 'today', 'week', 'all'
-  type LocalUpload = Upload & { uploader_name?: string };
+  type LocalUpload = Upload & { uploader_name?: string; oss_raw_path?: string | null };
   const [uploads, setUploads] = useState<LocalUpload[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
@@ -102,7 +102,8 @@ export const UploadCenter: React.FC<UploadCenterProps> = ({ onViewClick }) => {
         date: new Date(item.created_at).toLocaleString(),
         uploader_email: item.uploader_email,
         uploader_name: item.uploader_name,
-        candidate_id: item.candidates?.[0]?.id || item.candidates?.id || undefined
+        candidate_id: item.candidates?.[0]?.id || item.candidates?.id || undefined,
+        oss_raw_path: item.oss_raw_path || null
       }));
 
       setUploads(formattedUploads);
@@ -443,6 +444,7 @@ export const UploadCenter: React.FC<UploadCenterProps> = ({ onViewClick }) => {
                       </td>
                       <td className="px-6 py-4 text-gray-500">{file.date}</td>
                       <td className="px-6 py-4 text-right">
+                        <div className="flex items-center justify-end gap-2">
                         {file.status === 'failed' ? (
                             <button 
                               onClick={() => retryUpload(file.id)}
@@ -479,6 +481,30 @@ export const UploadCenter: React.FC<UploadCenterProps> = ({ onViewClick }) => {
                               暂无数据
                             </span>
                         )}
+
+                        {/* 管理员删除按钮 */}
+                        {isAdmin && (
+                          <button
+                            onClick={async () => {
+                              if (!confirm('确认删除该上传记录及其存储文件？此操作不可恢复。')) return;
+                              try {
+                                if (file.oss_raw_path) {
+                                  await supabase.storage.from('resume').remove([file.oss_raw_path]);
+                                }
+                                const { error } = await supabase.from('resume_uploads').delete().eq('id', file.id);
+                                if (error) throw error;
+                                fetchUploads();
+                              } catch (err: any) {
+                                console.error('删除失败', err);
+                                alert('删除失败: ' + (err?.message || '未知错误'));
+                              }
+                            }}
+                            className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border text-xs font-medium text-red-700 border-red-200 hover:bg-red-50"
+                          >
+                            <Trash size={14} /> 删除
+                          </button>
+                        )}
+                        </div>
                       </td>
                     </tr>
                   ))

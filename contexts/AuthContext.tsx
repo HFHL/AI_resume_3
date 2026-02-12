@@ -32,6 +32,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [role, setRole] = useState<UserRole | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [loading, setLoading] = useState(true);
+  const prevIsAdminRef = React.useRef<boolean>(false);
 
   const fetchProfile = async (u: User | null): Promise<UserProfile | null> => {
     if (!u) return null;
@@ -79,8 +80,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // 2. Or profile has approved status + admin/super_admin role
     const isBootstrapAdmin = userEmail && BOOTSTRAP_SUPER_ADMIN_EMAILS.includes(userEmail.toLowerCase());
     const isProfileAdmin = Boolean(p && p.approval_status === 'approved' && (p.role === 'admin' || p.role === 'super_admin'));
-    
-    setIsAdmin(isBootstrapAdmin || isProfileAdmin);
+    const nextIsAdmin = isBootstrapAdmin || isProfileAdmin;
+    setIsAdmin(nextIsAdmin);
+    prevIsAdminRef.current = nextIsAdmin;
     // 统一只从 profiles 表获取 display_name
     setDisplayName(p?.display_name || null);
   };
@@ -91,18 +93,49 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setSession(session);
       const u = session?.user ?? null;
       setUser(u);
-      const p = await fetchProfile(u);
-      applyProfileState(p, u?.email);
+      try {
+        const p = await fetchProfile(u);
+        // If we couldn't fetch profile but session exists, avoid demoting admin immediately
+        if (!p && u && prevIsAdminRef.current) {
+          // keep previous admin state
+        } else {
+          applyProfileState(p, u?.email);
+        }
+      } catch (e) {
+        console.warn('initial profile fetch failed', e);
+      }
       setLoading(false);
     });
 
     // Listen for changes on auth state (logged in, signed out, etc.)
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       setSession(session);
       const u = session?.user ?? null;
       setUser(u);
-      const p = await fetchProfile(u);
-      applyProfileState(p, u?.email);
+      try {
+        const p = await fetchProfile(u);
+        // If signed out, clear everything
+        if (!u) {
+          setProfile(null);
+          setApprovalStatus(null);
+          setRole(null);
+          setIsAdmin(false);
+          setDisplayName(null);
+        } else if (!p) {
+          // transient failure to fetch profile: do not demote admin if previously admin
+          if (!prevIsAdminRef.current) {
+            // previously not admin, keep as not admin
+            setIsAdmin(false);
+          } else {
+            // previously admin and couldn't fetch profile now -> keep admin to avoid flicker
+            setIsAdmin(true);
+          }
+        } else {
+          applyProfileState(p, u?.email);
+        }
+      } catch (e) {
+        console.warn('onAuthStateChange profile fetch failed', e);
+      }
       setLoading(false);
     });
 
@@ -201,6 +234,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setApprovalStatus(null);
     setRole(null);
     setIsAdmin(false);
+    prevIsAdminRef.current = false;
     setDisplayName(null);
     return { error };
   };

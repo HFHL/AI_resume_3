@@ -5,6 +5,15 @@
 
 const STORAGE_KEY = 'resume_list_state';
 
+const getSessionStorage = (): Storage | null => {
+  if (typeof window === 'undefined') return null;
+  try {
+    return window.sessionStorage;
+  } catch (e) {
+    return null;
+  }
+};
+
 export interface ResumeListState {
   currentPage: number;
   filters: {
@@ -21,16 +30,20 @@ export interface ResumeListState {
 }
 
 export const saveResumeListState = (state: ResumeListState) => {
+  const storage = getSessionStorage();
+  if (!storage) return;
   try {
-    sessionStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    storage.setItem(STORAGE_KEY, JSON.stringify(state));
   } catch (e) {
     console.warn('Failed to save resume list state:', e);
   }
 };
 
 export const loadResumeListState = (): Partial<ResumeListState> | null => {
+  const storage = getSessionStorage();
+  if (!storage) return null;
   try {
-    const stored = sessionStorage.getItem(STORAGE_KEY);
+    const stored = storage.getItem(STORAGE_KEY);
     if (stored) {
       return JSON.parse(stored);
     }
@@ -41,8 +54,10 @@ export const loadResumeListState = (): Partial<ResumeListState> | null => {
 };
 
 export const clearResumeListState = () => {
+  const storage = getSessionStorage();
+  if (!storage) return;
   try {
-    sessionStorage.removeItem(STORAGE_KEY);
+    storage.removeItem(STORAGE_KEY);
   } catch (e) {
     console.warn('Failed to clear resume list state:', e);
   }
