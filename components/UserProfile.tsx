@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { LogOut, Save } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
+import { ChangePassword } from './ChangePassword';
 
 export const UserProfile: React.FC = () => {
   const { user, displayName, updateDisplayName, signOut } = useAuth();
@@ -82,9 +83,11 @@ export const UserProfile: React.FC = () => {
             <div className="font-medium text-xs truncate" title={user?.id}>{user?.id}</div>
           </div>
         </div>
+        <ChangePassword />
+
         <button 
           onClick={handleSignOut}
-          className="w-full flex items-center justify-center gap-2 border border-gray-300 py-2 rounded-lg hover:bg-gray-50 text-gray-700 font-medium transition-colors"
+          className="w-full mt-4 flex items-center justify-center gap-2 border border-gray-300 py-2 rounded-lg hover:bg-gray-50 text-gray-700 font-medium transition-colors"
         >
           <LogOut size={16} /> 退出登录
         </button>

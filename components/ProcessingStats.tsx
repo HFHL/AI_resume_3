@@ -74,6 +74,13 @@ export const ProcessingStats: React.FC = () => {
   const userPageSize = 10;
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [loadingIds, setLoadingIds] = useState<Record<string, boolean>>({});
+  const [recentDisplayLimit, setRecentDisplayLimit] = useState<number>(1000);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [loadProgress, setLoadProgress] = useState<number>(0);
+  const loadIntervalRef = React.useRef<number | null>(null);
+  const [totalCount, setTotalCount] = useState<number>(0);
+  const [profileMapState, setProfileMapState] = useState<Record<string, { display_name: string; email?: string }>>({});
 
   const mapStatus = (status: string) => {
     if (status === 'SUCCESS') return 'success';
@@ -85,15 +92,66 @@ export const ProcessingStats: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const { data, error: fetchError } = await supabase
+      // get exact total count
+      const { count, error: countError } = await supabase
         .from('resume_uploads')
-        .select('id,user_id,uploader_name,uploader_email,filename,status,created_at,oss_raw_path,candidates(id)')
-        .order('created_at', { ascending: false })
-        .limit(5000);
+        .select('*', { head: true, count: 'exact' });
+      if (countError) console.warn('count fetch failed:', countError);
+      const total = (count as number) || 0;
+      setTotalCount(total);
 
-      if (fetchError) throw fetchError;
+      // fetch aggregated status counts directly for accurate summary
+      const [{ count: successCount }, { count: failedCount }] = await Promise.all([
+        supabase.from('resume_uploads').select('*', { head: true, count: 'exact' }).eq('status', 'SUCCESS'),
+        supabase.from('resume_uploads').select('*', { head: true, count: 'exact' }).eq('status', 'FAILED')
+      ]).then((res) => res.map(r => r as any)).catch((e) => { console.warn('status counts fetch failed', e); return [{ count: 0 }, { count: 0 }]; });
 
-      const rows = (data || []) as UploadRow[];
+      // fetch per-user minimal data for userStats (entire table) in paginated chunks
+      let userRows: any[] = [];
+      if (total > 0) {
+        const chunkSize = 2000; // fetch in batches to avoid server-side limits
+        for (let start = 0; start < total; start += chunkSize) {
+          const end = Math.min(total - 1, start + chunkSize - 1);
+          const { data: udata, error: uerr } = await supabase
+            .from('resume_uploads')
+            .select('user_id,uploader_name,uploader_email,status,created_at')
+            .order('created_at', { ascending: false })
+            .range(start, end);
+          if (uerr) throw uerr;
+          if (udata && udata.length) userRows.push(...(udata as any[]));
+        }
+      }
+
+      // fetch initial recent rows (full fields) limited to recentDisplayLimit (initial 1000)
+      const initialEnd = Math.max(0, Math.min(total - 1, recentDisplayLimit - 1));
+      let rows: UploadRow[] = [];
+      if (total > 0) {
+        const { data, error: fetchError } = await supabase
+          .from('resume_uploads')
+          .select('id,user_id,uploader_name,uploader_email,filename,status,created_at,oss_raw_path,candidates(id)')
+          .order('created_at', { ascending: false })
+          .range(0, initialEnd);
+        if (fetchError) throw fetchError;
+        rows = (data || []) as UploadRow[];
+      }
+
+      // collect user_ids referenced in fetched rows and userRows, then fetch display names from profiles
+      const userIdSet = new Set<string>();
+      rows.forEach(r => { if (r.user_id) userIdSet.add(r.user_id); });
+      userRows.forEach(r => { if (r.user_id) userIdSet.add(r.user_id); });
+      const userIds = Array.from(userIdSet);
+      let profileMap: Record<string, { display_name: string; email?: string }> = {};
+      if (userIds.length > 0) {
+        // profiles table uses `user_id` as primary key (not `id`)
+        const { data: profilesData, error: pErr } = await supabase
+          .from('profiles')
+          .select('user_id,display_name,email')
+          .in('user_id', userIds);
+        if (!pErr && profilesData) {
+          profilesData.forEach((p: any) => { profileMap[p.user_id] = { display_name: p.display_name, email: p.email }; });
+        }
+      }
+      // compute summary counts and per-user stats from the full table data (userRows)
       const now = new Date();
       const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
       const weekStart = new Date(todayStart.getTime() - 7 * 24 * 60 * 60 * 1000);
@@ -102,30 +160,27 @@ export const ProcessingStats: React.FC = () => {
       let weekUploads = 0;
       let pendingQueue = 0;
       let processingUploads = 0;
-      let successUploads = 0;
-      let failedUploads = 0;
+      // success/failed come from aggregated counts (successCount/failedCount)
 
       const userMap = new Map<string, UserUploadStats>();
-
-      rows.forEach((row) => {
-        const createdAt = new Date(row.created_at);
+      userRows.forEach((row: any) => {
+        const createdAt = row.created_at ? new Date(row.created_at) : null;
         const normalized = mapStatus(row.status);
-        const isToday = createdAt >= todayStart;
-        const isWeek = createdAt >= weekStart;
+        const isToday = createdAt ? createdAt >= todayStart : false;
+        const isWeek = createdAt ? createdAt >= weekStart : false;
         const isPendingQueue = row.status === 'PENDING' || row.status === 'OCR_DONE';
-
         if (isToday) todayUploads += 1;
         if (isWeek) weekUploads += 1;
         if (isPendingQueue) pendingQueue += 1;
-        if (normalized === 'success') successUploads += 1;
-        if (normalized === 'failed') failedUploads += 1;
         if (normalized === 'processing') processingUploads += 1;
 
-        const key = row.user_id || row.uploader_email || row.id;
-        const displayName = row.uploader_name || row.uploader_email || '未知用户';
-        const email = row.uploader_email || '-';
-        const current = userMap.get(key) || {
-          key,
+        // Group strictly by resume_uploads.user_id per requirement.
+        // Use a stable placeholder for unknown user_id so all nulls are grouped together.
+        const uidKey = row.user_id || 'UNKNOWN_USER';
+        const displayName = (row.user_id && profileMap[row.user_id]?.display_name) || row.uploader_name || row.uploader_email || '未知用户';
+        const email = (row.user_id && profileMap[row.user_id]?.email) || row.uploader_email || '-';
+        const current = userMap.get(uidKey) || {
+          key: uidKey,
           userId: row.user_id,
           name: displayName,
           email,
@@ -144,37 +199,70 @@ export const ProcessingStats: React.FC = () => {
         if (normalized === 'success') current.success += 1;
         if (normalized === 'failed') current.failed += 1;
 
-        userMap.set(key, current);
+        userMap.set(uidKey, current);
       });
 
-      const sortedUsers = Array.from(userMap.values()).sort((a, b) => {
+      let sortedUsers = Array.from(userMap.values()).sort((a, b) => {
         if (b.total !== a.total) return b.total - a.total;
         return b.today - a.today;
       });
 
-      const recent = rows.slice(0, 200).map((row: any) => ({
+      // Include users from `profiles` who have no resume_uploads: show them with zero counts
+      try {
+        const { data: allProfiles } = await supabase.from('profiles').select('user_id,display_name,email');
+        if (allProfiles && allProfiles.length) {
+          allProfiles.forEach((p: any) => {
+            const uid = p.user_id;
+            if (!userMap.has(uid)) {
+              const entry: UserUploadStats = {
+                key: uid,
+                userId: uid,
+                name: p.display_name || p.email || '未知用户',
+                email: p.email || '-',
+                total: 0,
+                today: 0,
+                pending: 0,
+                processing: 0,
+                success: 0,
+                failed: 0
+              };
+              userMap.set(uid, entry);
+            }
+          });
+          sortedUsers = Array.from(userMap.values()).sort((a, b) => {
+            if (b.total !== a.total) return b.total - a.total;
+            return b.today - a.today;
+          });
+        }
+      } catch (e) {
+        console.warn('fetch all profiles for zero-fill failed', e);
+      }
+
+      const recent = rows.map((row: any) => ({
         uploadId: row.id,
         candidateId: row.candidates?.[0]?.id || row.candidates?.id || null,
         filename: row.filename || '未命名文件',
-        userName: row.uploader_name || row.uploader_email || '未知用户',
+        userName: (row.user_id && profileMap[row.user_id]?.display_name) || row.uploader_name || row.uploader_email || '未知用户',
         status: mapStatus(row.status),
         createdAt: row.created_at,
         ossRawPath: row.oss_raw_path || null
       }));
-
       setSummary({
-        totalUploads: rows.length,
+        totalUploads: total || rows.length,
         todayUploads,
         weekUploads,
         pendingQueue,
         processingUploads,
-        successUploads,
-        failedUploads,
+        successUploads: (successCount as number) || 0,
+        failedUploads: (failedCount as number) || 0,
         activeUsers: sortedUsers.length
       });
+      // use aggregated user stats computed above (userMap)
       setUserStats(sortedUsers);
       setRecentAll(recent as RecentUpload[]);
       setRecentUploads(recent.slice(0, 20) as RecentUpload[]);
+      // persist profile map for later incremental loads
+      setProfileMapState(profileMap);
     } catch (e: any) {
       console.error('fetchStats failed:', e);
       setError(e?.message || '加载失败');
@@ -206,20 +294,38 @@ export const ProcessingStats: React.FC = () => {
     const now = new Date();
     const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const weekStart = new Date(todayStart.getTime() - 7 * 24 * 60 * 60 * 1000);
-    return recentAll.filter((item) => {
+    const filtered = recentAll.filter((item) => {
       const created = new Date(item.createdAt);
       if (filterMode === 'today') return created >= todayStart;
       if (filterMode === 'week') return created >= weekStart;
       return true;
     });
+    // ensure sorted by created_at desc
+    filtered.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    return filtered;
   }, [recentAll, filterMode]);
 
   const totalPages = Math.max(0, Math.ceil(filteredRecent.length / pageSize));
 
-  // Reset to first page when filter or data changes
+  // Reset to first page when filter changes
   useEffect(() => {
     setPage(1);
-  }, [filterMode, recentAll]);
+  }, [filterMode]);
+
+  // clamp page when totalPages changes (e.g., after loading more)
+  useEffect(() => {
+    setPage((p) => Math.min(p, totalPages || 1));
+  }, [totalPages]);
+
+  // cleanup interval on unmount
+  useEffect(() => {
+    return () => {
+      if (loadIntervalRef.current) {
+        clearInterval(loadIntervalRef.current);
+        loadIntervalRef.current = null;
+      }
+    };
+  }, []);
 
   const totalUserPages = Math.max(0, Math.ceil(userStats.length / userPageSize));
   useEffect(() => {
@@ -391,7 +497,7 @@ export const ProcessingStats: React.FC = () => {
       <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
         <div className="px-6 py-4 border-b border-gray-100 font-semibold text-gray-900 flex items-center justify-between">
           <div className="flex items-center gap-4">
-            <div>最近上传记录</div>
+            <div>上传记录</div>
             <div className="text-sm text-gray-500">共 {filteredRecent.length} 条</div>
           </div>
           <div className="flex items-center gap-2">
@@ -419,46 +525,37 @@ export const ProcessingStats: React.FC = () => {
           <table className="w-full min-w-full text-sm text-left">
             <thead className="text-xs text-gray-500 bg-gray-50 uppercase">
               <tr>
-                <th className="px-6 py-3 font-medium">文件名</th>
-                <th className="px-6 py-3 font-medium">上传人</th>
-                <th className="px-6 py-3 font-medium">状态</th>
-                <th className="px-6 py-3 font-medium">上传时间</th>
-                <th className="px-6 py-3 font-medium">操作</th>
-              </tr>
+                  <th className="px-6 py-3 font-medium">文件名</th>
+                  <th className="px-6 py-3 font-medium">上传人</th>
+                  <th className="px-6 py-3 font-medium">状态</th>
+                  <th className="px-6 py-3 font-medium">上传时间</th>
+                  <th className="px-6 py-3 font-medium">重新解析</th>
+                  <th className="px-6 py-3 font-medium">操作</th>
+                </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
               {(() => {
-                // compute filtered recent list
-                if (!recentAll || recentAll.length === 0) return (
+                if (!filteredRecent || filteredRecent.length === 0) return (
                   <tr>
-                    <td colSpan={4} className="px-6 py-8 text-center text-gray-400">
+                    <td colSpan={6} className="px-6 py-8 text-center text-gray-400">
                       暂无上传数据
                     </td>
                   </tr>
                 );
 
-                const now = new Date();
-                const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-                const weekStart = new Date(todayStart.getTime() - 7 * 24 * 60 * 60 * 1000);
-
-                const filtered = recentAll.filter((item) => {
-                  const created = new Date(item.createdAt);
-                  if (filterMode === 'today') return created >= todayStart;
-                  if (filterMode === 'week') return created >= weekStart;
-                  return true;
-                }).slice(0, 200);
-
-                if (filtered.length === 0) {
+                // use currently loaded subset (controlled by recentDisplayLimit)
+                const loaded = filteredRecent.slice(0, recentDisplayLimit);
+                if (loaded.length === 0) {
                   return (
                     <tr>
-                      <td colSpan={4} className="px-6 py-8 text-center text-gray-400">
+                      <td colSpan={6} className="px-6 py-8 text-center text-gray-400">
                         暂无上传数据
                       </td>
                     </tr>
                   );
                 }
                 const start = (page - 1) * pageSize;
-                const pageItems = filtered.slice(start, start + pageSize);
+                const pageItems = loaded.slice(start, start + pageSize);
 
                 return pageItems.map((item) => (
                   <tr key={item.uploadId} className="hover:bg-gray-50">
@@ -470,18 +567,57 @@ export const ProcessingStats: React.FC = () => {
                       {item.status === 'processing' && <span className="text-amber-700">处理中</span>}
                     </td>
                     <td onClick={() => goToResume(item.candidateId)} className="px-6 py-4 text-gray-500 cursor-pointer">{new Date(item.createdAt).toLocaleString()}</td>
+                    <td className="px-6 py-4 text-center">
+                      <button
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          if (!confirm('确定要重新解析此上传记录吗？这会重新执行 OCR 识别和 AI 结构化解析。')) return;
+                          // set per-row loading flag
+                          setLoadingIds((s) => ({ ...s, [item.uploadId]: true }));
+                          try {
+                            const { error } = await supabase
+                              .from('resume_uploads')
+                              .update({ status: 'PENDING', error_reason: null, ocr_content: null })
+                              .eq('id', item.uploadId);
+                            if (error) throw error;
+                            alert('已提交重新解析，请等待后端处理完成。');
+                            fetchStats();
+                          } catch (err: any) {
+                            console.error('重新解析提交失败', err);
+                            alert('重新解析失败: ' + (err?.message || '未知错误'));
+                          } finally {
+                            setLoadingIds((s) => {
+                              const next = { ...s };
+                              delete next[item.uploadId];
+                              return next;
+                            });
+                          }
+                        }}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium text-amber-700 border-amber-200 hover:bg-amber-50"
+                        disabled={!!loadingIds[item.uploadId]}
+                      >
+                        {loadingIds[item.uploadId] ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />} 重新解析
+                      </button>
+                    </td>
                     <td className="px-6 py-4 text-right">
                       <div className="flex items-center justify-end gap-2">
                         <button
-                          onClick={() => goToResume(item.candidateId)}
-                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium text-indigo-700 border-indigo-200 hover:bg-indigo-50"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (loadingIds[item.uploadId]) return;
+                            goToResume(item.candidateId);
+                          }}
+                          disabled={!!loadingIds[item.uploadId]}
+                          className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium ${loadingIds[item.uploadId] ? 'text-gray-400 border-gray-200 cursor-not-allowed' : 'text-indigo-700 border-indigo-200 hover:bg-indigo-50'}`}
                         >
-                          <Eye size={14} /> 详情
+                          {loadingIds[item.uploadId] ? <Loader2 size={14} className="animate-spin" /> : <Eye size={14} />} 详情
                         </button>
                         <button
                           onClick={async (e) => {
                             e.stopPropagation();
+                            if (loadingIds[item.uploadId]) return;
                             if (!confirm('确定删除该上传记录及其存储文件？此操作不可恢复。')) return;
+                            setLoadingIds((s) => ({ ...s, [item.uploadId]: true }));
                             try {
                               // delete storage object if path exists
                               if (item.ossRawPath) {
@@ -494,11 +630,18 @@ export const ProcessingStats: React.FC = () => {
                             } catch (err: any) {
                               console.error('删除失败', err);
                               alert('删除失败: ' + (err?.message || '未知错误'));
+                            } finally {
+                              setLoadingIds((s) => {
+                                const next = { ...s };
+                                delete next[item.uploadId];
+                                return next;
+                              });
                             }
                           }}
-                          className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border text-xs font-medium text-red-700 border-red-200 hover:bg-red-50"
+                          disabled={!!loadingIds[item.uploadId]}
+                          className={`inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border text-xs font-medium ${loadingIds[item.uploadId] ? 'text-gray-400 border-gray-100 cursor-not-allowed' : 'text-red-700 border-red-200 hover:bg-red-50'}`}
                         >
-                          <Trash size={14} /> 删除
+                          {loadingIds[item.uploadId] ? <Loader2 size={14} className="animate-spin" /> : <Trash size={14} />} 删除
                         </button>
                       </div>
                     </td>
@@ -509,7 +652,7 @@ export const ProcessingStats: React.FC = () => {
           </table>
         </div>
         <div className="px-6 py-3 border-t border-gray-100 flex items-center justify-between">
-          <div className="text-sm text-gray-500">共 {filteredRecent.length} 条 / 共 {totalPages} 页</div>
+          <div className="text-sm text-gray-500">共 {filteredRecent.length} 条 (已加载 {Math.min(filteredRecent.length, recentDisplayLimit)}) / 共 {totalPages} 页</div>
           <div className="flex items-center gap-2">
             <button
               onClick={() => setPage((p) => Math.max(1, p - 1))}
@@ -526,7 +669,78 @@ export const ProcessingStats: React.FC = () => {
             >
               下一页
             </button>
+            <button
+              onClick={async () => {
+                if (loadingMore) return;
+                const alreadyLoaded = recentAll.length;
+                if (alreadyLoaded >= totalCount) {
+                  alert('没有更多记录可加载');
+                  return;
+                }
+                setLoadingMore(true);
+                try {
+                  const chunk = 100;
+                  const start = alreadyLoaded;
+                  const end = Math.min(totalCount - 1, start + chunk - 1);
+                  const { data: moreData, error: moreErr } = await supabase
+                    .from('resume_uploads')
+                    .select('id,user_id,uploader_name,uploader_email,filename,status,created_at,oss_raw_path,candidates(id)')
+                    .order('created_at', { ascending: false })
+                    .range(start, end);
+                  if (moreErr) throw moreErr;
+                  const newRows = (moreData || []) as any[];
+
+                  // fetch missing profile display names
+                  const missingIds = Array.from(new Set(
+                    newRows.map((r: any) => r.user_id).filter((id): id is string => !!id).filter(id => !profileMapState[id])
+                  ));
+                  let profileMap = { ...profileMapState };
+                  if (missingIds.length > 0) {
+                    const { data: profilesData, error: pErr } = await supabase
+                      .from('profiles')
+                      .select('user_id,display_name,email')
+                      .in('user_id', missingIds);
+                    if (!pErr && profilesData) profilesData.forEach((p: any) => { profileMap[p.user_id] = { display_name: p.display_name, email: p.email }; });
+                    setProfileMapState(profileMap);
+                  }
+
+                  const newRecent = newRows.map((row: any) => ({
+                    uploadId: row.id,
+                    candidateId: row.candidates?.[0]?.id || row.candidates?.id || null,
+                    filename: row.filename || '未命名文件',
+                    userName: (row.user_id && profileMap[row.user_id]?.display_name) || row.uploader_name || row.uploader_email || '未知用户',
+                    status: mapStatus(row.status),
+                    createdAt: row.created_at,
+                    ossRawPath: row.oss_raw_path || null
+                  }));
+
+                  setRecentAll((prev) => {
+                    const nextAll = [...prev, ...newRecent];
+                    return nextAll;
+                  });
+                  // expand display limit so appended items become visible
+                  setRecentDisplayLimit((prev) => prev + newRecent.length);
+                  // do not change the current `page` — keep user's place after append
+                  setLoadProgress(Math.round(((alreadyLoaded + newRecent.length) / Math.max(1, totalCount)) * 100));
+                } catch (err: any) {
+                  console.error('加载更多失败', err);
+                  alert('加载更多失败: ' + (err?.message || '未知错误'));
+                } finally {
+                  setLoadingMore(false);
+                }
+              }}
+              className={`px-3 py-1 rounded-md border text-sm text-gray-700 border-gray-200 hover:bg-gray-50`}
+            >
+              {loadingMore ? '加载中...' : '加载更多'}
+            </button>
           </div>
+        </div>
+        {/* progress bar showing loaded percent */}
+        <div className="px-6 pt-2 pb-4">
+          <div className="w-full bg-gray-200 h-2 rounded overflow-hidden">
+            <div className="h-full bg-indigo-600 transition-all" style={{ width: `${Math.min(loadProgress, 100)}%` }} />
+          </div>
+          <div className="text-xs text-gray-500 mt-1">已加载 {recentAll.length} / {totalCount || filteredRecent.length} 条</div>
         </div>
       </div>
     </div>

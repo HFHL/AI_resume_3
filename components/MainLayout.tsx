@@ -32,6 +32,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({ children, hideHeader = f
     { id: 'resumes', label: '简历管理', path: '/resumes' },
     { id: 'jobs', label: '职位匹配', path: '/jobs' },
     { id: 'upload', label: '上传中心', path: '/upload' },
+    { id: 'my-stats', label: '用户处理统计', path: '/my-stats' },
     ...(isAdmin ? [{ id: 'stats', label: '处理统计', path: '/admin/stats' }] : []),
     ...(isAdmin ? [{ id: 'users', label: '用户管理', path: '/admin/users' }] : []),
   ];

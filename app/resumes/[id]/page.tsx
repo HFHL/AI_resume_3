@@ -10,7 +10,11 @@ export default function ResumeDetailPage() {
   const candidateId = params.id as string;
 
   const handleBack = () => {
-    router.push('/resumes');
+    if (typeof window !== 'undefined' && window.history.length > 1) {
+      router.back();
+    } else {
+      router.push('/resumes');
+    }
   };
 
   return (
