@@ -9,6 +9,7 @@ export default function HomePage() {
 
   useEffect(() => {
     // 重定向到简历管理页面
+    console.log("test");
     router.replace('/resumes');
   }, [router]);
 
