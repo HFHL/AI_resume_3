@@ -1,24 +1,22 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-if (!SUPABASE_URL) {
-  throw new Error('Missing NEXT_PUBLIC_SUPABASE_URL');
-}
-
-if (!SERVICE_ROLE_KEY) {
-  // Fail fast; server should have this configured for admin reset
-  throw new Error('Missing SUPABASE_SERVICE_ROLE_KEY');
-}
-
-const supabaseAdmin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
-  auth: { persistSession: false }
-});
-
 export async function POST(req: Request) {
   try {
+    const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+    if (!SUPABASE_URL) {
+      console.error('Missing NEXT_PUBLIC_SUPABASE_URL');
+      return NextResponse.json({ error: '服务未配置' }, { status: 500 });
+    }
+    if (!SERVICE_ROLE_KEY) {
+      console.error('Missing SUPABASE_SERVICE_ROLE_KEY');
+      return NextResponse.json({ error: '服务未配置' }, { status: 500 });
+    }
+
+    const supabaseAdmin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, { auth: { persistSession: false } });
+
     const body = await req.json();
     const { email, newPassword } = body || {};
     if (!email || typeof email !== 'string' || !email.includes('@')) {
@@ -47,11 +45,6 @@ export async function POST(req: Request) {
     const userId = profile.user_id as string;
 
     // Use Supabase Admin to update the user's password directly
-    // (requires service_role key and appropriate privileges)
-    // supabase-js exposes admin APIs under auth.admin
-    // Note: method names may vary with supabase-js versions; this follows the common pattern.
-    // If your supabase client version differs, replace with the appropriate admin call.
-    // Call admin API via a safe any-cast to avoid TypeScript surface mismatches
     const adminClient = (supabaseAdmin.auth as any)?.admin || (supabaseAdmin as any)?.auth?.admin;
     if (!adminClient || typeof adminClient.updateUserById !== 'function') {
       console.error('Supabase admin client missing updateUserById');
