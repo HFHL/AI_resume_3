@@ -52,6 +52,7 @@ export const UserProcessingStats: React.FC = () => {
   const [filterMode, setFilterMode] = useState<'all'|'today'|'week'>('all');
   const [loadingIds, setLoadingIds] = useState<Record<string, boolean>>({});
   const returningFromRef = React.useRef(false);
+  const restoringRef = React.useRef(false);
 
   const mapStatus = (status: string) => {
     if (status === 'SUCCESS') return 'success';
@@ -183,21 +184,22 @@ export const UserProcessingStats: React.FC = () => {
     }
   }, [user, displayName, page, filterMode, loadProgress]);
 
+  // restore cached snapshot on mount/user change (do not re-run on fetchUserStats identity changes)
   useEffect(() => {
-    // try restoring snapshot first to avoid refetching when coming back from detail
-    const skipInitialRef = { current: false } as any;
     const cached = loadUserProcessingState();
     if (cached && cached.recentAll && cached.recentAll.length > 0) {
       try {
+        restoringRef.current = true;
         if (cached.summary) setSummary(cached.summary as SummaryStats);
         if (cached.recentAll) setRecentAll(cached.recentAll as RecentUpload[]);
         if (typeof cached.recentDisplayLimit === 'number') setRecentDisplayLimit(cached.recentDisplayLimit);
         if (typeof cached.totalCount === 'number') setTotalCount(cached.totalCount);
-        if (typeof cached.page === 'number') setPage(cached.page);
+        // apply filterMode first so filter-change reset doesn't overwrite restored `page`
         if (cached.filterMode) setFilterMode(cached.filterMode as any);
+        if (typeof cached.page === 'number') setPage(cached.page);
         if (typeof cached.loadProgress === 'number') setLoadProgress(cached.loadProgress);
+        setTimeout(() => { try { restoringRef.current = false; } catch (e) {} }, 200);
         setLoading(false);
-        // restore scroll according to saved target (skip if URL-driven return will handle it)
         try {
           const params = typeof window !== 'undefined' ? new URLSearchParams(window.location.search || '') : null;
           if (!(params && params.get('from'))) {
@@ -210,13 +212,16 @@ export const UserProcessingStats: React.FC = () => {
             }
           }
         } catch (e) {}
-        skipInitialRef.current = true;
       } catch (e) {
         // fallthrough
       }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user]);
+
+  // subscription and initial fetch (depends on fetchUserStats identity)
+  useEffect(() => {
     fetchUserStats();
-    // subscribe to realtime updates for this user's uploads
     if (!user?.id) return;
     const sub = supabase
       .channel(`resume_uploads_user_${user.id}`)
@@ -237,13 +242,15 @@ export const UserProcessingStats: React.FC = () => {
         } catch (e) {}
         const cached = loadUserProcessingState();
         if (!cached) return;
+        restoringRef.current = true;
         if (cached.summary) setSummary(cached.summary as SummaryStats);
         if (cached.recentAll) setRecentAll(cached.recentAll as RecentUpload[]);
         if (typeof cached.recentDisplayLimit === 'number') setRecentDisplayLimit(cached.recentDisplayLimit);
         if (typeof cached.totalCount === 'number') setTotalCount(cached.totalCount);
-        if (typeof cached.page === 'number') setPage(cached.page);
         if (cached.filterMode) setFilterMode(cached.filterMode as any);
+        if (typeof cached.page === 'number') setPage(cached.page);
         if (typeof cached.loadProgress === 'number') setLoadProgress(cached.loadProgress);
+        setTimeout(() => { try { restoringRef.current = false; } catch (e) {} }, 200);
         waitForElement('.user-processing-scroll', 2000).then((el) => {
           if (el && typeof cached.scrollPosition === 'number') el.scrollTo({ top: cached.scrollPosition || 0 });
         });
@@ -276,8 +283,8 @@ export const UserProcessingStats: React.FC = () => {
 
   const totalPages = Math.max(0, Math.ceil(filteredRecent.length / pageSize));
 
-  useEffect(() => { setPage(1); }, [filterMode]);
-  useEffect(() => { setPage((p) => Math.min(p, totalPages || 1)); }, [totalPages]);
+  useEffect(() => { if (restoringRef.current) return; setPage(1); }, [filterMode]);
+  useEffect(() => { if (restoringRef.current) return; setPage((p) => Math.min(p, totalPages || 1)); }, [totalPages]);
 
   const goToResume = (resumeId?: string | null) => {
     if (!resumeId) return;
@@ -374,6 +381,7 @@ export const UserProcessingStats: React.FC = () => {
           <p className="text-gray-500 mt-1">仅显示您自己的上传与处理状态</p>
         </div>
         <button
+          type="button"
           onClick={fetchUserStats}
           disabled={loading}
           className="flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-300 hover:bg-gray-50 text-gray-700 transition-colors"
@@ -413,15 +421,18 @@ export const UserProcessingStats: React.FC = () => {
           </div>
           <div className="flex items-center gap-2">
             <button
-              onClick={() => setFilterMode('today')}
+              type="button"
+              onClick={() => { console.log('[UserProcessingStats] filter=today clicked'); setFilterMode('today'); }}
               className={`px-3 py-1 rounded-md text-sm font-medium border ${filterMode === 'today' ? 'bg-indigo-700 text-white border-indigo-700' : 'text-gray-700 border-gray-200 hover:bg-gray-50'}`}
             >今日</button>
             <button
-              onClick={() => setFilterMode('week')}
+              type="button"
+              onClick={() => { console.log('[UserProcessingStats] filter=week clicked'); setFilterMode('week'); }}
               className={`px-3 py-1 rounded-md text-sm font-medium border ${filterMode === 'week' ? 'bg-indigo-700 text-white border-indigo-700' : 'text-gray-700 border-gray-200 hover:bg-gray-50'}`}
             >本周</button>
             <button
-              onClick={() => setFilterMode('all')}
+              type="button"
+              onClick={() => { console.log('[UserProcessingStats] filter=all clicked'); setFilterMode('all'); }}
               className={`px-3 py-1 rounded-md text-sm font-medium border ${filterMode === 'all' ? 'bg-indigo-700 text-white border-indigo-700' : 'text-gray-700 border-gray-200 hover:bg-gray-50'}`}
             >全部</button>
           </div>
@@ -466,6 +477,7 @@ export const UserProcessingStats: React.FC = () => {
                     </td>
                     <td className="px-6 py-4 text-center">
                       <button
+                        type="button"
                         onClick={async (e) => {
                           e.stopPropagation();
                           if (!confirm('确定要重新解析此上传记录吗？这会重新执行 OCR 识别和 AI 结构化解析。')) return;
@@ -494,6 +506,7 @@ export const UserProcessingStats: React.FC = () => {
                     <td className="px-6 py-4 text-right">
                       <div className="flex items-center justify-end gap-2">
                         <button
+                          type="button"
                           onClick={(e) => { e.stopPropagation(); goToResume(item.candidateId); }}
                           className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium text-indigo-700 border-indigo-200 hover:bg-indigo-50`}
                         >
@@ -512,18 +525,22 @@ export const UserProcessingStats: React.FC = () => {
           <div className="text-sm text-gray-500">共 {filteredRecent.length} 条 (已加载 {Math.min(filteredRecent.length, recentDisplayLimit)}) / 共 {totalPages} 页</div>
           <div className="flex items-center gap-2">
             <button
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              type="button"
+              onClick={() => { console.log('[UserProcessingStats] prev clicked, current page', page); setPage((p) => Math.max(1, p - 1)); }}
               disabled={page <= 1}
               className={`px-3 py-1 rounded-md border text-sm ${page <= 1 ? 'text-gray-300 border-gray-100 cursor-not-allowed' : 'text-gray-700 border-gray-200 hover:bg-gray-50'}`}
             >上一页</button>
             <div className="text-sm text-gray-600">第 {page} / {totalPages || 0} 页</div>
             <button
-              onClick={() => setPage((p) => Math.min(totalPages || 1, p + 1))}
+              type="button"
+              onClick={() => { console.log('[UserProcessingStats] next clicked, current page', page); setPage((p) => Math.min(totalPages || 1, p + 1)); }}
               disabled={page >= totalPages}
               className={`px-3 py-1 rounded-md border text-sm ${page >= totalPages ? 'text-gray-300 border-gray-100 cursor-not-allowed' : 'text-gray-700 border-gray-200 hover:bg-gray-50'}`}
             >下一页</button>
             <button
+              type="button"
               onClick={async () => {
+                console.log('[UserProcessingStats] load more clicked, alreadyLoaded', recentAll.length, 'totalCount', totalCount);
                 if (loadingMore) return;
                 const alreadyLoaded = recentAll.length;
                 if (alreadyLoaded >= totalCount) { alert('没有更多记录可加载'); return; }

@@ -347,15 +347,19 @@ export const ProcessingStats: React.FC = () => {
     }
   }, [recentDisplayLimit, page, userPage, filterMode, loadProgress]);
 
-  // load cached snapshot if available to avoid refetching on return
+  // refs for snapshot restore control
   const skipInitialFetchRef = React.useRef(false);
   const returningFromRef = React.useRef(false);
+  const restoringRef = React.useRef(false);
+
+  // load cached snapshot once on mount (do not re-run on filter/page changes)
   useEffect(() => {
     if (!isAdmin) return;
-
     const cached = loadProcessingState();
     if (cached && cached.recentAll && cached.recentAll.length > 0) {
       try {
+        // mark restoring so other effects (reset/clamp) don't stomp restored values
+        restoringRef.current = true;
         if (cached.summary) setSummary(cached.summary as SummaryStats);
         if (cached.userStats) setUserStats(cached.userStats as UserUploadStats[]);
         if (cached.recentAll) setRecentAll(cached.recentAll as RecentUpload[]);
@@ -363,14 +367,14 @@ export const ProcessingStats: React.FC = () => {
         if (typeof cached.recentDisplayLimit === 'number') setRecentDisplayLimit(cached.recentDisplayLimit);
         if (typeof cached.totalCount === 'number') setTotalCount(cached.totalCount);
         if (cached.profileMapState) setProfileMapState(cached.profileMapState as any);
+        // apply filterMode first so the "reset to first page on filter change" effect
+        // doesn't overwrite the restored `page` value.
+        if (cached.filterMode) setFilterMode(cached.filterMode as any);
         if (typeof cached.page === 'number') setPage(cached.page);
         if (typeof cached.userPage === 'number') setUserPage(cached.userPage);
-        if (cached.filterMode) setFilterMode(cached.filterMode as any);
         if (typeof cached.loadProgress === 'number') setLoadProgress(cached.loadProgress);
         // restore scroll position after render (wait for element)
         setLoading(false);
-        // restore according to saved target
-        // If URL contains a `from` param (we're returning from detail), skip restoring cached scroll here
         try {
           const params = typeof window !== 'undefined' ? new URLSearchParams(window.location.search || '') : null;
           if (params && params.get('from')) {
@@ -388,12 +392,18 @@ export const ProcessingStats: React.FC = () => {
           // ignore
         }
         skipInitialFetchRef.current = true;
+        // release restoring flag after a short delay so dependent effects don't overwrite restored values
+        setTimeout(() => { try { restoringRef.current = false; } catch (e) {} }, 200);
       } catch (e) {
         // fallthrough to normal fetch if anything goes wrong parsing
       }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAdmin]);
 
-    // 订阅实时更新; subscription will call fetchStats when DB changes
+  // subscribe to realtime updates and trigger fetch; keep this effect dependent on fetchStats
+  useEffect(() => {
+    if (!isAdmin) return;
     const subscription = supabase
       .channel('resume_uploads_stats')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'resume_uploads' }, () => {
@@ -439,10 +449,13 @@ export const ProcessingStats: React.FC = () => {
         if (typeof cached.recentDisplayLimit === 'number') setRecentDisplayLimit(cached.recentDisplayLimit);
         if (typeof cached.totalCount === 'number') setTotalCount(cached.totalCount);
         if (cached.profileMapState) setProfileMapState(cached.profileMapState as any);
+        // apply filterMode first so filter-change reset doesn't overwrite page
+        restoringRef.current = true;
+        if (cached.filterMode) setFilterMode(cached.filterMode as any);
         if (typeof cached.page === 'number') setPage(cached.page);
         if (typeof cached.userPage === 'number') setUserPage(cached.userPage);
-        if (cached.filterMode) setFilterMode(cached.filterMode as any);
         if (typeof cached.loadProgress === 'number') setLoadProgress(cached.loadProgress);
+        setTimeout(() => { try { restoringRef.current = false; } catch (e) {} }, 200);
         waitForElement('.processing-scroll', 2000).then((scrollEl) => {
           if (scrollEl && typeof cached.scrollPosition === 'number') scrollEl.scrollTo({ top: cached.scrollPosition || 0 });
         });
@@ -479,11 +492,13 @@ export const ProcessingStats: React.FC = () => {
 
   // Reset to first page when filter changes
   useEffect(() => {
+    if (restoringRef.current) return;
     setPage(1);
   }, [filterMode]);
 
   // clamp page when totalPages changes (e.g., after loading more)
   useEffect(() => {
+    if (restoringRef.current) return;
     setPage((p) => Math.min(p, totalPages || 1));
   }, [totalPages]);
 
@@ -499,6 +514,7 @@ export const ProcessingStats: React.FC = () => {
 
   const totalUserPages = Math.max(0, Math.ceil(userStats.length / userPageSize));
   useEffect(() => {
+    if (restoringRef.current) return;
     setUserPage(1);
   }, [userStats]);
 
@@ -657,6 +673,7 @@ export const ProcessingStats: React.FC = () => {
           <p className="text-gray-500 mt-1">查看全局上传统计，并按用户查看上传记录</p>
         </div>
         <button
+          type="button"
           onClick={fetchStats}
           disabled={loading}
           className="flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-300 hover:bg-gray-50 text-gray-700 transition-colors"
@@ -746,6 +763,7 @@ export const ProcessingStats: React.FC = () => {
                       <td className="px-6 py-4 text-red-600">{row.failed}</td>
                       <td className="px-6 py-4 text-right">
                         <button
+                          type="button"
                           onClick={() => goToUserUploads(row.userId)}
                           disabled={!row.userId}
                           className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors ${
@@ -768,7 +786,8 @@ export const ProcessingStats: React.FC = () => {
           <div className="text-sm text-gray-500">共 {userStats.length} 条 / 共 {totalUserPages} 页</div>
           <div className="flex items-center gap-2">
             <button
-              onClick={() => setUserPage((p) => Math.max(1, p - 1))}
+              type="button"
+              onClick={() => { console.log('[ProcessingStats] userPage prev clicked, current', userPage); setUserPage((p) => Math.max(1, p - 1)); }}
               disabled={userPage <= 1}
               className={`px-3 py-1 rounded-md border text-sm ${userPage <= 1 ? 'text-gray-300 border-gray-100 cursor-not-allowed' : 'text-gray-700 border-gray-200 hover:bg-gray-50'}`}
             >
@@ -776,7 +795,8 @@ export const ProcessingStats: React.FC = () => {
             </button>
             <div className="text-sm text-gray-600">第 {userPage} / {totalUserPages || 0} 页</div>
             <button
-              onClick={() => setUserPage((p) => Math.min(totalUserPages || 1, p + 1))}
+              type="button"
+              onClick={() => { console.log('[ProcessingStats] userPage next clicked, current', userPage); setUserPage((p) => Math.min(totalUserPages || 1, p + 1)); }}
               disabled={userPage >= totalUserPages}
               className={`px-3 py-1 rounded-md border text-sm ${userPage >= totalUserPages ? 'text-gray-300 border-gray-100 cursor-not-allowed' : 'text-gray-700 border-gray-200 hover:bg-gray-50'}`}
             >
@@ -794,19 +814,22 @@ export const ProcessingStats: React.FC = () => {
           </div>
           <div className="flex items-center gap-2">
             <button
-              onClick={() => setFilterMode('today')}
+              type="button"
+              onClick={() => { console.log('[ProcessingStats] filter=today clicked'); setFilterMode('today'); }}
               className={`px-3 py-1 rounded-md text-sm font-medium border ${filterMode === 'today' ? 'bg-indigo-700 text-white border-indigo-700' : 'text-gray-700 border-gray-200 hover:bg-gray-50'}`}
             >
               今日
             </button>
             <button
-              onClick={() => setFilterMode('week')}
+              type="button"
+              onClick={() => { console.log('[ProcessingStats] filter=week clicked'); setFilterMode('week'); }}
               className={`px-3 py-1 rounded-md text-sm font-medium border ${filterMode === 'week' ? 'bg-indigo-700 text-white border-indigo-700' : 'text-gray-700 border-gray-200 hover:bg-gray-50'}`}
             >
               本周
             </button>
             <button
-              onClick={() => setFilterMode('all')}
+              type="button"
+              onClick={() => { console.log('[ProcessingStats] filter=all clicked'); setFilterMode('all'); }}
               className={`px-3 py-1 rounded-md text-sm font-medium border ${filterMode === 'all' ? 'bg-indigo-700 text-white border-indigo-700' : 'text-gray-700 border-gray-200 hover:bg-gray-50'}`}
             >
               全部
@@ -861,6 +884,7 @@ export const ProcessingStats: React.FC = () => {
                     <td onClick={() => goToResume(item.candidateId)} className="px-6 py-4 text-gray-500 cursor-pointer">{new Date(item.createdAt).toLocaleString()}</td>
                     <td className="px-6 py-4 text-center">
                       <button
+                        type="button"
                         onClick={async (e) => {
                           e.stopPropagation();
                           if (!confirm('确定要重新解析此上传记录吗？这会重新执行 OCR 识别和 AI 结构化解析。')) return;
@@ -894,6 +918,7 @@ export const ProcessingStats: React.FC = () => {
                     <td className="px-6 py-4 text-right">
                       <div className="flex items-center justify-end gap-2">
                         <button
+                          type="button"
                           onClick={(e) => {
                             e.stopPropagation();
                             if (loadingIds[item.uploadId]) return;
@@ -905,6 +930,7 @@ export const ProcessingStats: React.FC = () => {
                           {loadingIds[item.uploadId] ? <Loader2 size={14} className="animate-spin" /> : <Eye size={14} />} 详情
                         </button>
                         <button
+                          type="button"
                           onClick={async (e) => {
                             e.stopPropagation();
                             if (loadingIds[item.uploadId]) return;
@@ -947,7 +973,8 @@ export const ProcessingStats: React.FC = () => {
           <div className="text-sm text-gray-500">共 {filteredRecent.length} 条 (已加载 {Math.min(filteredRecent.length, recentDisplayLimit)}) / 共 {totalPages} 页</div>
           <div className="flex items-center gap-2">
             <button
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              type="button"
+              onClick={() => { console.log('[ProcessingStats] recent prev clicked, current page', page); setPage((p) => Math.max(1, p - 1)); }}
               disabled={page <= 1}
               className={`px-3 py-1 rounded-md border text-sm ${page <= 1 ? 'text-gray-300 border-gray-100 cursor-not-allowed' : 'text-gray-700 border-gray-200 hover:bg-gray-50'}`}
             >
@@ -955,14 +982,17 @@ export const ProcessingStats: React.FC = () => {
             </button>
             <div className="text-sm text-gray-600">第 {page} / {totalPages || 0} 页</div>
             <button
-              onClick={() => setPage((p) => Math.min(totalPages || 1, p + 1))}
+              type="button"
+              onClick={() => { console.log('[ProcessingStats] recent next clicked, current page', page); setPage((p) => Math.min(totalPages || 1, p + 1)); }}
               disabled={page >= totalPages}
               className={`px-3 py-1 rounded-md border text-sm ${page >= totalPages ? 'text-gray-300 border-gray-100 cursor-not-allowed' : 'text-gray-700 border-gray-200 hover:bg-gray-50'}`}
             >
               下一页
             </button>
             <button
+              type="button"
               onClick={async () => {
+                console.log('[ProcessingStats] load more clicked, alreadyLoaded', recentAll.length, 'totalCount', totalCount);
                 if (loadingMore) return;
                 const alreadyLoaded = recentAll.length;
                 if (alreadyLoaded >= totalCount) {
