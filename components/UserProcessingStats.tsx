@@ -181,7 +181,7 @@ export const UserProcessingStats: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [user, displayName]);
+  }, [user, displayName, page, filterMode, loadProgress]);
 
   useEffect(() => {
     // try restoring snapshot first to avoid refetching when coming back from detail

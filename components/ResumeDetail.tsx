@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { getStorageUrl } from '@/lib/storage';
+import Image from 'next/image';
 
 // --- COMPONENTS ---
 
@@ -401,10 +402,13 @@ export const ResumeDetail: React.FC<ResumeDetailProps> = ({ onBack, candidateId 
             
             {/* Profile Card */}
             <div className="flex gap-6 mb-8">
-              <img 
-                src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${candidate.id}`} 
-                alt="Avatar" 
-                className="w-24 h-24 rounded-xl object-cover bg-gray-100 shadow-sm border border-gray-100" 
+              <Image
+                src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${candidate.id}`}
+                alt="Avatar"
+                width={96}
+                height={96}
+                className="w-24 h-24 rounded-xl object-cover bg-gray-100 shadow-sm border border-gray-100"
+                unoptimized
               />
               <div className="flex-1">
                 <div className="flex justify-between items-start">

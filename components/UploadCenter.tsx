@@ -26,24 +26,7 @@ export const UploadCenter: React.FC<UploadCenterProps> = ({ onViewClick }) => {
   const [resolvedDisplayName, setResolvedDisplayName] = useState<string | null>(null);
   const [effectiveViewedUserId, setEffectiveViewedUserId] = useState<string | null>(null);
 
-  // Fetch uploads
-  useEffect(() => {
-    fetchUploads();
-
-    // Subscribe to changes
-    const subscription = supabase
-      .channel('resume_uploads_changes')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'resume_uploads' }, () => {
-        fetchUploads();
-      })
-      .subscribe();
-
-    return () => {
-      subscription.unsubscribe();
-    };
-  }, [user, requestedUserParam, isAdmin]);
-
-  const fetchUploads = async () => {
+  const fetchUploads = React.useCallback(async () => {
     if (!user) return;
     try {
       setLoading(true);
@@ -113,7 +96,24 @@ export const UploadCenter: React.FC<UploadCenterProps> = ({ onViewClick }) => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [user, displayName, isAdmin, searchParams]);
+
+  // Fetch uploads
+  useEffect(() => {
+    fetchUploads();
+
+    // Subscribe to changes
+    const subscription = supabase
+      .channel('resume_uploads_changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'resume_uploads' }, () => {
+        fetchUploads();
+      })
+      .subscribe();
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, [fetchUploads]);
 
   
 

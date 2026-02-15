@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import Image from 'next/image';
 import {
   Search, Trash2, Download, User, Briefcase, GraduationCap, MapPin,
   Phone, Building2, MoreHorizontal
@@ -133,7 +134,14 @@ export const ResumeList: React.FC<ResumeListProps> = ({
                   />
                 </div>
                 <div className="flex-shrink-0 flex flex-col items-center md:items-start min-w-[120px]">
-                  <img src={c.avatar} alt={c.name} className="w-16 h-16 rounded-full bg-gray-100 mb-3 object-cover border-2 border-white shadow-sm" />
+                  <Image
+                    src={c.avatar || '/default-avatar.png'}
+                    alt={c.name}
+                    width={64}
+                    height={64}
+                    className="w-16 h-16 rounded-full bg-gray-100 mb-3 object-cover border-2 border-white shadow-sm"
+                    unoptimized
+                  />
                   <div className="text-xs text-gray-400 mb-1">{c.last_active}活跃</div>
                 </div>
                 <div className="flex-1 min-w-0">

@@ -51,9 +51,13 @@ export async function POST(req: Request) {
     // supabase-js exposes admin APIs under auth.admin
     // Note: method names may vary with supabase-js versions; this follows the common pattern.
     // If your supabase client version differs, replace with the appropriate admin call.
-    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-    // @ts-ignore
-    const { data: updatedUser, error: updateErr } = await supabaseAdmin.auth.admin.updateUserById(userId, {
+    // Call admin API via a safe any-cast to avoid TypeScript surface mismatches
+    const adminClient = (supabaseAdmin.auth as any)?.admin || (supabaseAdmin as any)?.auth?.admin;
+    if (!adminClient || typeof adminClient.updateUserById !== 'function') {
+      console.error('Supabase admin client missing updateUserById');
+      return NextResponse.json({ error: '内部服务不可用' }, { status: 500 });
+    }
+    const { data: updatedUser, error: updateErr } = await adminClient.updateUserById(userId, {
       password: newPassword
     });
 

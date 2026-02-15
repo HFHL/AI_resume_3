@@ -345,7 +345,7 @@ export const ProcessingStats: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [recentDisplayLimit, page, userPage, filterMode, loadProgress]);
 
   // load cached snapshot if available to avoid refetching on return
   const skipInitialFetchRef = React.useRef(false);
