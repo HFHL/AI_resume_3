@@ -4,7 +4,9 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Loader2, RefreshCw, Clock, CheckCircle2, AlertCircle, Users, Eye, Trash } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { loadProcessingState, saveProcessingState } from '@/lib/processingState';
+import { waitForElement } from '@/lib/domUtils';
 
 interface UploadRow {
   id: string;
@@ -263,6 +265,80 @@ export const ProcessingStats: React.FC = () => {
       setRecentUploads(recent.slice(0, 20) as RecentUpload[]);
       // persist profile map for later incremental loads
       setProfileMapState(profileMap);
+
+      // persist snapshot so returning from detail can reuse cached data (include scroll)
+      try {
+        // determine scroll target: detect scrollable ancestor (main / processing-scroll / window)
+        const detectScrollInfo = () => {
+          try {
+            if (typeof window === 'undefined') return { scrollPosition: 0, scrollTarget: 'window' };
+            const container = document.querySelector('.processing-scroll') as HTMLElement | null;
+            const winY = window.scrollY || 0;
+            if (winY && winY > 0) return { scrollPosition: winY, scrollTarget: 'window' };
+            let node: HTMLElement | null = container;
+            while (node) {
+              try {
+                const style = window.getComputedStyle(node);
+                const canScroll = (node.scrollHeight || 0) > (node.clientHeight || 0) && /(auto|scroll)/.test(style.overflowY || '');
+                if (canScroll) {
+                  if (node.tagName === 'MAIN') return { scrollPosition: node.scrollTop || 0, scrollTarget: 'main' };
+                  if (node.classList && node.classList.contains('processing-scroll')) return { scrollPosition: node.scrollTop || 0, scrollTarget: '.processing-scroll' };
+                  return { scrollPosition: node.scrollTop || 0, scrollTarget: 'window' };
+                }
+              } catch (e) {}
+              node = node.parentElement;
+            }
+            // fallback to document scrollingElement or window
+            const docEl = document.scrollingElement as HTMLElement | null;
+            if (docEl) return { scrollPosition: docEl.scrollTop || 0, scrollTarget: 'window' };
+            return { scrollPosition: 0, scrollTarget: 'window' };
+          } catch (e) {
+            return { scrollPosition: 0, scrollTarget: 'window' };
+          }
+        };
+        const { scrollPosition, scrollTarget } = detectScrollInfo();
+        try { console.log('[ProcessingStats] detected scroll info before save', { scrollPosition, scrollTarget }); } catch (e) {}
+        saveProcessingState({
+          summary: {
+            totalUploads: total || rows.length,
+            todayUploads,
+            weekUploads,
+            pendingQueue,
+            processingUploads,
+            successUploads: (successCount as number) || 0,
+            failedUploads: (failedCount as number) || 0,
+            activeUsers: sortedUsers.length
+          },
+          userStats: sortedUsers,
+          recentAll: recent,
+          recentDisplayLimit,
+          totalCount: total,
+          profileMapState: profileMap,
+          page,
+          userPage,
+          filterMode,
+          loadProgress,
+          scrollPosition,
+          scrollTarget
+        });
+        try { console.log('[ProcessingStats] snapshot saved after fetch', { total, recent: recent.length, scrollPosition, scrollTarget }); } catch (e) {}
+      } catch (e) {
+        /* swallow */
+      }
+      // if we are returning from detail, ensure we scroll to bottom now that data is loaded
+      try {
+        if ((returningFromRef as any).current) {
+          console.log('[ProcessingStats] detected returningFromRef during fetch, performing final scroll');
+          const el = await waitForElement('.processing-scroll', 7000);
+          if (el) {
+            const bottom = (el.scrollHeight || 0) - (el.clientHeight || 0);
+            try { el.scrollTo({ top: bottom || 0 }); } catch (e) {}
+          } else {
+            try { window.scrollTo({ top: document.body.scrollHeight || 0 }); } catch (e) {}
+          }
+          try { (returningFromRef as any).current = false; } catch (e) {}
+        }
+      } catch (e) {}
     } catch (e: any) {
       console.error('fetchStats failed:', e);
       setError(e?.message || '加载失败');
@@ -271,23 +347,117 @@ export const ProcessingStats: React.FC = () => {
     }
   }, []);
 
+  // load cached snapshot if available to avoid refetching on return
+  const skipInitialFetchRef = React.useRef(false);
+  const returningFromRef = React.useRef(false);
   useEffect(() => {
-    if (isAdmin) {
-      fetchStats();
+    if (!isAdmin) return;
 
-      // 订阅实时更新
-      const subscription = supabase
-        .channel('resume_uploads_stats')
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'resume_uploads' }, () => {
-          fetchStats();
-        })
-        .subscribe();
-
-      return () => {
-        subscription.unsubscribe();
-      };
+    const cached = loadProcessingState();
+    if (cached && cached.recentAll && cached.recentAll.length > 0) {
+      try {
+        if (cached.summary) setSummary(cached.summary as SummaryStats);
+        if (cached.userStats) setUserStats(cached.userStats as UserUploadStats[]);
+        if (cached.recentAll) setRecentAll(cached.recentAll as RecentUpload[]);
+        if (cached.recentAll) setRecentUploads((cached.recentAll as RecentUpload[]).slice(0, 20));
+        if (typeof cached.recentDisplayLimit === 'number') setRecentDisplayLimit(cached.recentDisplayLimit);
+        if (typeof cached.totalCount === 'number') setTotalCount(cached.totalCount);
+        if (cached.profileMapState) setProfileMapState(cached.profileMapState as any);
+        if (typeof cached.page === 'number') setPage(cached.page);
+        if (typeof cached.userPage === 'number') setUserPage(cached.userPage);
+        if (cached.filterMode) setFilterMode(cached.filterMode as any);
+        if (typeof cached.loadProgress === 'number') setLoadProgress(cached.loadProgress);
+        // restore scroll position after render (wait for element)
+        setLoading(false);
+        // restore according to saved target
+        // If URL contains a `from` param (we're returning from detail), skip restoring cached scroll here
+        try {
+          const params = typeof window !== 'undefined' ? new URLSearchParams(window.location.search || '') : null;
+          if (params && params.get('from')) {
+            // skip cached scroll restore to allow URL-driven restore to run
+          } else if (cached.scrollTarget === 'window') {
+            try { window.scrollTo({ top: cached.scrollPosition || 0 }); } catch (e) {}
+          } else {
+            waitForElement(cached.scrollTarget || '.processing-scroll', 2000).then((scrollEl) => {
+              try {
+                if (scrollEl && typeof cached.scrollPosition === 'number') scrollEl.scrollTo({ top: cached.scrollPosition || 0 });
+              } catch (e) {}
+            });
+          }
+        } catch (e) {
+          // ignore
+        }
+        skipInitialFetchRef.current = true;
+      } catch (e) {
+        // fallthrough to normal fetch if anything goes wrong parsing
+      }
     }
+
+    // 订阅实时更新; subscription will call fetchStats when DB changes
+    const subscription = supabase
+      .channel('resume_uploads_stats')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'resume_uploads' }, () => {
+        fetchStats();
+      })
+      .subscribe();
+
+    // only call initial fetch if we didn't restore from cache
+    if (!skipInitialFetchRef.current) {
+      fetchStats();
+    }
+
+    return () => {
+      subscription.unsubscribe();
+    };
   }, [isAdmin, fetchStats]);
+
+  // Ensure scroll and snapshot are restored when navigating back (browser back / bfcache)
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const restoreFromStorage = () => {
+      try {
+        console.log('[ProcessingStats] restoreFromStorage triggered');
+        const cached = loadProcessingState();
+        console.log('[ProcessingStats] cached loaded in restoreFromStorage', cached);
+        if (!cached) return;
+        // if URL indicates we're returning from detail, skip this cached restore
+        try {
+          const params = typeof window !== 'undefined' ? new URLSearchParams(window.location.search || '') : null;
+          if (params && params.get('from')) {
+            console.log('[ProcessingStats] skipping cached restore because URL has from param');
+            return;
+          }
+          if ((returningFromRef as any).current) {
+            console.log('[ProcessingStats] skipping cached restore because returningFromRef set');
+            return;
+          }
+        } catch (e) {}
+        if (cached.recentAll) setRecentAll(cached.recentAll as RecentUpload[]);
+        if (cached.userStats) setUserStats(cached.userStats as UserUploadStats[]);
+        if (cached.summary) setSummary(cached.summary as SummaryStats);
+        if (typeof cached.recentDisplayLimit === 'number') setRecentDisplayLimit(cached.recentDisplayLimit);
+        if (typeof cached.totalCount === 'number') setTotalCount(cached.totalCount);
+        if (cached.profileMapState) setProfileMapState(cached.profileMapState as any);
+        if (typeof cached.page === 'number') setPage(cached.page);
+        if (typeof cached.userPage === 'number') setUserPage(cached.userPage);
+        if (cached.filterMode) setFilterMode(cached.filterMode as any);
+        if (typeof cached.loadProgress === 'number') setLoadProgress(cached.loadProgress);
+        waitForElement('.processing-scroll', 2000).then((scrollEl) => {
+          if (scrollEl && typeof cached.scrollPosition === 'number') scrollEl.scrollTo({ top: cached.scrollPosition || 0 });
+        });
+      } catch (e) {
+        // ignore
+      }
+    };
+
+    window.addEventListener('popstate', restoreFromStorage);
+    window.addEventListener('pageshow', restoreFromStorage);
+    return () => {
+      window.removeEventListener('popstate', restoreFromStorage);
+      window.removeEventListener('pageshow', restoreFromStorage);
+    };
+  }, []);
 
   const filteredRecent = React.useMemo(() => {
     if (!recentAll || recentAll.length === 0) return [];
@@ -334,6 +504,38 @@ export const ProcessingStats: React.FC = () => {
 
   const goToUserUploads = (userId: string | null) => {
     if (!userId) return;
+    // save snapshot (including scroll) before navigating away
+    try {
+      const detectScrollInfo = () => {
+        try {
+          if (typeof window === 'undefined') return { scrollPosition: 0, scrollTarget: 'window' };
+          const container = document.querySelector('.processing-scroll') as HTMLElement | null;
+          const winY = window.scrollY || 0;
+          if (winY && winY > 0) return { scrollPosition: winY, scrollTarget: 'window' };
+          let node: HTMLElement | null = container;
+          while (node) {
+            try {
+              const style = window.getComputedStyle(node);
+              const canScroll = (node.scrollHeight || 0) > (node.clientHeight || 0) && /(auto|scroll)/.test(style.overflowY || '');
+              if (canScroll) {
+                if (node.tagName === 'MAIN') return { scrollPosition: node.scrollTop || 0, scrollTarget: 'main' };
+                if (node.classList && node.classList.contains('processing-scroll')) return { scrollPosition: node.scrollTop || 0, scrollTarget: '.processing-scroll' };
+                return { scrollPosition: node.scrollTop || 0, scrollTarget: 'window' };
+              }
+            } catch (e) {}
+            node = node.parentElement;
+          }
+          const docEl = document.scrollingElement as HTMLElement | null;
+          if (docEl) return { scrollPosition: docEl.scrollTop || 0, scrollTarget: 'window' };
+          return { scrollPosition: 0, scrollTarget: 'window' };
+        } catch (e) {
+          return { scrollPosition: 0, scrollTarget: 'window' };
+        }
+      };
+      const { scrollPosition, scrollTarget } = detectScrollInfo();
+      saveProcessingState({ summary, userStats, recentAll, recentDisplayLimit, totalCount, profileMapState, page, userPage, filterMode, loadProgress, scrollPosition, scrollTarget });
+      try { console.log('[ProcessingStats] saved snapshot before navigating to user uploads', { userId, scrollPosition, scrollTarget }); } catch (e) {}
+    } catch (e) {}
     router.push(`/upload?userId=${encodeURIComponent(userId)}`);
   };
 
@@ -342,8 +544,98 @@ export const ProcessingStats: React.FC = () => {
       alert('该上传记录未关联候选人，无法打开候选人详情');
       return;
     }
-    router.push(`/resumes/${encodeURIComponent(resumeId)}`);
+    // save snapshot (including scroll) before navigating away so returning doesn't reload and scroll is restored
+    try {
+      const detectScrollInfo = () => {
+        try {
+          if (typeof window === 'undefined') return { scrollPosition: 0, scrollTarget: 'window' };
+          const container = document.querySelector('.processing-scroll') as HTMLElement | null;
+          const winY = window.scrollY || 0;
+          if (winY && winY > 0) return { scrollPosition: winY, scrollTarget: 'window' };
+          let node: HTMLElement | null = container;
+          while (node) {
+            try {
+              const style = window.getComputedStyle(node);
+              const canScroll = (node.scrollHeight || 0) > (node.clientHeight || 0) && /(auto|scroll)/.test(style.overflowY || '');
+              if (canScroll) {
+                if (node.tagName === 'MAIN') return { scrollPosition: node.scrollTop || 0, scrollTarget: 'main' };
+                if (node.classList && node.classList.contains('processing-scroll')) return { scrollPosition: node.scrollTop || 0, scrollTarget: '.processing-scroll' };
+                return { scrollPosition: node.scrollTop || 0, scrollTarget: 'window' };
+              }
+            } catch (e) {}
+            node = node.parentElement;
+          }
+          const docEl = document.scrollingElement as HTMLElement | null;
+          if (docEl) return { scrollPosition: docEl.scrollTop || 0, scrollTarget: 'window' };
+          return { scrollPosition: 0, scrollTarget: 'window' };
+        } catch (e) {
+          return { scrollPosition: 0, scrollTarget: 'window' };
+        }
+      };
+      const { scrollPosition, scrollTarget } = detectScrollInfo();
+      saveProcessingState({ summary, userStats, recentAll, recentDisplayLimit, totalCount, profileMapState, page, userPage, filterMode, loadProgress, scrollPosition, scrollTarget });
+      try { console.log('[ProcessingStats] saved snapshot before navigating to resume', { resumeId, scrollPosition, scrollTarget, page }); } catch (e) {}
+      // include minimal navigation state via query params so ResumeDetail can return explicitly
+      const qp = `?from=admin_stats&page=${encodeURIComponent(String(page))}`;
+      try { console.log('[ProcessingStats] navigating to', `/resumes/${encodeURIComponent(resumeId)}${qp}`); } catch (e) {}
+      router.push(`/resumes/${encodeURIComponent(resumeId)}${qp}`);
+    } catch (e) {
+      router.push(`/resumes/${encodeURIComponent(resumeId)}`);
+    }
   };
+
+  // restore when navigated back via direct query params (read from window.location.search)
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const sp = new URLSearchParams(window.location.search || '');
+      const from = sp.get('from');
+      if (from === 'admin_stats') {
+        const p = Number(sp.get('page') || page);
+        if (!isNaN(p)) setPage(p);
+        // mark we are returning so cached restore won't stomp us
+        (returningFromRef as any).current = true;
+        // try to read cached scroll target/position and restore that specific surface first
+        const cached = loadProcessingState();
+        const doScroll = async () => {
+          try {
+            if (cached && typeof cached.scrollPosition === 'number' && cached.scrollTarget) {
+              try { console.log('[ProcessingStats] URL-return detected, restoring cached scrollTarget', cached.scrollTarget, cached.scrollPosition); } catch (e) {}
+              if (cached.scrollTarget === 'main') {
+                const el = await waitForElement('main', 7000);
+                if (el) { try { el.scrollTo({ top: cached.scrollPosition || 0 }); } catch (e) {} ; return; }
+              } else if (cached.scrollTarget === '.processing-scroll') {
+                const el = await waitForElement('.processing-scroll', 7000);
+                if (el) { try { el.scrollTo({ top: cached.scrollPosition || 0 }); } catch (e) {} ; return; }
+              } else if (cached.scrollTarget === 'window') {
+                try { window.scrollTo({ top: cached.scrollPosition || 0 }); } catch (e) {}
+                return;
+              }
+            }
+            // fallback: scroll to bottom of whatever exists
+            const elFallback = await waitForElement('.processing-scroll', 7000);
+            if (elFallback) {
+              const bottom = (elFallback.scrollHeight || 0) - (elFallback.clientHeight || 0);
+              try { elFallback.scrollTo({ top: bottom || 0 }); } catch (e) {}
+            } else {
+              try { window.scrollTo({ top: document.body.scrollHeight || 0 }); } catch (e) {}
+            }
+          } catch (e) {}
+        };
+        // run multiple retries over 5 seconds
+        void doScroll();
+        setTimeout(() => { void doScroll(); }, 500);
+        setTimeout(() => { void doScroll(); }, 1500);
+        setTimeout(() => { void doScroll(); }, 3000);
+        setTimeout(() => { void doScroll(); }, 5000);
+        // clean url to avoid repeated application
+        try { router.replace('/admin/stats'); } catch (e) {}
+        // clear returning flag after retries window
+        setTimeout(() => { try { (returningFromRef as any).current = false; } catch (e) {} }, 5500);
+      }
+    } catch (e) {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   if (!isAdmin) {
     return (
@@ -442,30 +734,30 @@ export const ProcessingStats: React.FC = () => {
                   const start = (userPage - 1) * userPageSize;
                   const pageItems = userStats.slice(start, start + userPageSize);
                   return pageItems.map((row) => (
-                  <tr key={row.key} className="hover:bg-gray-50">
-                    <td className="px-6 py-4">
-                      <div className="font-medium text-gray-900">{row.name}</div>
-                      <div className="text-xs text-gray-500 truncate max-w-[280px]">{row.email}</div>
-                    </td>
-                    <td className="px-6 py-4 text-gray-700">{row.total}</td>
-                    <td className="px-6 py-4 text-gray-700">{row.today}</td>
-                    <td className="px-6 py-4 text-amber-700">{row.pending}</td>
-                    <td className="px-6 py-4 text-green-700">{row.success}</td>
-                    <td className="px-6 py-4 text-red-600">{row.failed}</td>
-                    <td className="px-6 py-4 text-right">
-                      <button
-                        onClick={() => goToUserUploads(row.userId)}
-                        disabled={!row.userId}
-                        className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors ${
-                          row.userId
-                            ? 'text-indigo-700 border-indigo-200 hover:bg-indigo-50'
-                            : 'text-gray-400 border-gray-200 cursor-not-allowed'
-                        }`}
-                      >
-                        <Eye size={14} /> 查看上传
-                      </button>
-                    </td>
-                  </tr>
+                    <tr key={row.key} className="hover:bg-gray-50">
+                      <td className="px-6 py-4">
+                        <div className="font-medium text-gray-900">{row.name}</div>
+                        <div className="text-xs text-gray-500 truncate max-w-[280px]">{row.email}</div>
+                      </td>
+                      <td className="px-6 py-4 text-gray-700">{row.total}</td>
+                      <td className="px-6 py-4 text-gray-700">{row.today}</td>
+                      <td className="px-6 py-4 text-amber-700">{row.pending}</td>
+                      <td className="px-6 py-4 text-green-700">{row.success}</td>
+                      <td className="px-6 py-4 text-red-600">{row.failed}</td>
+                      <td className="px-6 py-4 text-right">
+                        <button
+                          onClick={() => goToUserUploads(row.userId)}
+                          disabled={!row.userId}
+                          className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors ${
+                            row.userId
+                              ? 'text-indigo-700 border-indigo-200 hover:bg-indigo-50'
+                              : 'text-gray-400 border-gray-200 cursor-not-allowed'
+                          }`}
+                        >
+                          <Eye size={14} /> 查看上传
+                        </button>
+                      </td>
+                    </tr>
                   ));
                 })()
               )}
@@ -521,7 +813,7 @@ export const ProcessingStats: React.FC = () => {
             </button>
           </div>
         </div>
-        <div className="overflow-auto">
+        <div className="overflow-auto processing-scroll">
           <table className="w-full min-w-full text-sm text-left">
             <thead className="text-xs text-gray-500 bg-gray-50 uppercase">
               <tr>

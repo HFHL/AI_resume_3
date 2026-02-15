@@ -65,6 +65,17 @@ export const Pagination: React.FC<PaginationProps> = ({
     return null; // 如果只有一页或没有数据，不显示分页
   }
 
+  const scrollToTop = () => {
+    try {
+      const el = document.querySelector('.resumes-scroll') as HTMLElement | null;
+      if (el) {
+        el.scrollTo({ top: 0 });
+        return;
+      }
+      if (typeof window !== 'undefined') window.scrollTo({ top: 0 });
+    } catch (e) {}
+  };
+
   return (
     <div className="bg-white border-t border-gray-200 px-6 py-4 flex flex-col sm:flex-row items-center justify-between gap-4">
       <div className="text-sm text-gray-600">
@@ -75,7 +86,7 @@ export const Pagination: React.FC<PaginationProps> = ({
 
       <div className="flex items-center gap-2">
         <button
-          onClick={() => onPageChange(currentPage - 1)}
+          onClick={() => { scrollToTop(); onPageChange(currentPage - 1); }}
           disabled={currentPage === 1}
           className={`p-2 rounded-lg border transition-colors ${
             currentPage === 1
@@ -88,7 +99,7 @@ export const Pagination: React.FC<PaginationProps> = ({
         </button>
 
         <div className="flex items-center gap-1">
-          {getPageNumbers().map((page, index) => {
+            {getPageNumbers().map((page, index) => {
             if (page === '...') {
               return (
                 <span
@@ -103,10 +114,10 @@ export const Pagination: React.FC<PaginationProps> = ({
             const pageNum = page as number;
             const isActive = pageNum === currentPage;
 
-            return (
+              return (
               <button
                 key={pageNum}
-                onClick={() => onPageChange(pageNum)}
+                onClick={() => { scrollToTop(); onPageChange(pageNum); }}
                 className={`min-w-[36px] h-9 px-3 rounded-lg text-sm font-medium transition-colors ${
                   isActive
                     ? 'bg-indigo-600 text-white shadow-sm'
@@ -120,7 +131,7 @@ export const Pagination: React.FC<PaginationProps> = ({
         </div>
 
         <button
-          onClick={() => onPageChange(currentPage + 1)}
+          onClick={() => { scrollToTop(); onPageChange(currentPage + 1); }}
           disabled={currentPage === totalPages}
           className={`p-2 rounded-lg border transition-colors ${
             currentPage === totalPages

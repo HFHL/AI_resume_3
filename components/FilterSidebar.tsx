@@ -31,7 +31,8 @@ export const FilterSidebar: React.FC<FilterSidebarProps> = ({ filters, setFilter
   // 过滤标签搜索结果
   const getFilteredTags = () => {
     // 合并所有标签
-    const allTags = [...AVAILABLE_TAGS.tech, ...AVAILABLE_TAGS.business];
+    // 去重：合并并去重，避免重复 key
+    const allTags = Array.from(new Set([...AVAILABLE_TAGS.tech, ...AVAILABLE_TAGS.business]));
     if (!tagSearch.trim()) return allTags;
     const search = tagSearch.toLowerCase();
     return allTags.filter(t => t.toLowerCase().includes(search));

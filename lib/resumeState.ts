@@ -27,6 +27,7 @@ export interface ResumeListState {
   };
   selectedIds: string[];
   scrollPosition?: number;
+  scrollTarget?: string; // 'window' or selector string
 }
 
 export const saveResumeListState = (state: ResumeListState) => {
@@ -34,6 +35,7 @@ export const saveResumeListState = (state: ResumeListState) => {
   if (!storage) return;
   try {
     storage.setItem(STORAGE_KEY, JSON.stringify(state));
+    try { console.log('[resumeState] saved', { currentPage: state.currentPage, scrollPosition: state.scrollPosition ?? null, scrollTarget: state.scrollTarget || null }); } catch (e) {}
   } catch (e) {
     console.warn('Failed to save resume list state:', e);
   }
@@ -45,7 +47,9 @@ export const loadResumeListState = (): Partial<ResumeListState> | null => {
   try {
     const stored = storage.getItem(STORAGE_KEY);
     if (stored) {
-      return JSON.parse(stored);
+      const parsed = JSON.parse(stored);
+      try { console.log('[resumeState] loaded', { currentPage: parsed.currentPage, scrollPosition: parsed.scrollPosition ?? null, scrollTarget: parsed.scrollTarget || null }); } catch (e) {}
+      return parsed;
     }
   } catch (e) {
     console.warn('Failed to load resume list state:', e);

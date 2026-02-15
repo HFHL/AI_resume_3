@@ -152,6 +152,11 @@ export const Login: React.FC = () => {
               {isSignUp ? '直接登录' : '立即注册'}
             </button>
           </p>
+            {!isSignUp && (
+              <div className="mt-3">
+                <button onClick={() => { window.location.href = '/forgot-password'; }} className="text-sm text-indigo-600 hover:underline">忘记密码？</button>
+              </div>
+            )}
         </div>
       </div>
     </div>

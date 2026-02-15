@@ -2,6 +2,7 @@
 
 import { useState, useMemo, useEffect, useRef } from 'react';
 import { Loader2 } from 'lucide-react';
+import { useRouter } from 'next/navigation';
 import { MainLayout } from '@/components/MainLayout';
 import { FilterSidebar } from '@/components/FilterSidebar';
 import { ResumeList } from '@/components/ResumeList';
@@ -9,6 +10,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { FilterState, Candidate } from '@/types';
 import { supabase } from '@/lib/supabase';
 import { loadResumeListState, saveResumeListState } from '@/lib/resumeState';
+import { waitForElement } from '@/lib/domUtils';
 
 // 全局数据缓存（模块级，避免切换标签时丢失）
 // 缓存永久有效，除非用户手动刷新浏览器
@@ -19,6 +21,21 @@ let cachedForUserId: string | null = null;
 export default function ResumesPage() {
   const { user } = useAuth();
   const isInitialMount = useRef(true);
+  const router = useRouter();
+  const returningFromRef = useRef(false);
+  // If the page was opened via a return URL (e.g. ?from=resumes), mark
+  // returningFromRef synchronously so save-effect doesn't overwrite the
+  // restored scroll position during initial mount.
+  if (typeof window !== 'undefined') {
+    try {
+      const spInit = new URLSearchParams(window.location.search || '');
+      const fromInit = spInit.get('from');
+      if (fromInit === 'resumes') {
+        returningFromRef.current = true;
+      }
+    } catch (e) {}
+  }
+  const lastScrollRef = useRef<{ scrollTarget: string; scrollPosition: number } | null>(null);
 
   // 从 sessionStorage 恢复状态
   const savedState = loadResumeListState();
@@ -39,14 +56,226 @@ export default function ResumesPage() {
   const [currentPage, setCurrentPage] = useState<number>(savedState?.currentPage || 1);
   const [itemsPerPage] = useState<number>(10);
 
-  // 保存状态到 sessionStorage
+  // 保存状态到 sessionStorage（包含滚动位置）
   useEffect(() => {
+    // Capture the actual element that receives scroll events so we know
+    // whether the user is scrolling the window, the top-level <main>, or
+    // the internal `.resumes-scroll` container. This is more reliable than
+    // computing from styles because some browsers/layouts attach the
+    // scrollbar to different elements.
+    if (typeof window !== 'undefined') {
+      const onScroll = (ev: Event) => {
+        try {
+          const target = ev.target as any;
+          let tag = 'window';
+          let pos = 0;
+          if (target === document || target === document.scrollingElement || target === window) {
+            tag = 'window';
+            pos = window.scrollY || (document.scrollingElement && (document.scrollingElement as HTMLElement).scrollTop) || 0;
+          } else if (target && target.tagName === 'MAIN') {
+            tag = 'main';
+            pos = (target as HTMLElement).scrollTop || 0;
+          } else if (target && target.classList && target.classList.contains('resumes-scroll')) {
+            tag = '.resumes-scroll';
+            pos = (target as HTMLElement).scrollTop || 0;
+          } else if (target && 'scrollTop' in target) {
+            pos = (target as HTMLElement).scrollTop || 0;
+          }
+          lastScrollRef.current = { scrollTarget: tag, scrollPosition: pos };
+        } catch (e) {}
+      };
+
+      window.addEventListener('scroll', onScroll, { passive: true });
+      const mainEl = document.querySelector('main');
+      const resumesEl = document.querySelector('.resumes-scroll');
+      mainEl?.addEventListener('scroll', onScroll, { passive: true });
+      resumesEl?.addEventListener('scroll', onScroll, { passive: true });
+
+      // cleanup
+      return () => {
+        try {
+          window.removeEventListener('scroll', onScroll as EventListener);
+          mainEl?.removeEventListener('scroll', onScroll as EventListener);
+          resumesEl?.removeEventListener('scroll', onScroll as EventListener);
+        } catch (e) {}
+      };
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 保存状态到 sessionStorage（包含滚动位置）
+  useEffect(() => {
+    // Don't overwrite saved scroll while we're returning and restoring
+    if (returningFromRef.current) {
+      try { console.log('[resumes] skip saving scroll state while returningFromRef'); } catch (e) {}
+      return;
+    }
+    const detectScrollInfo = () => {
+      try {
+        if (typeof window === 'undefined') return { scrollPosition: 0, scrollTarget: 'window' };
+        // Prefer the last observed actual scroll target if available.
+        if (lastScrollRef.current) {
+          try { console.log('[resumes] using lastScrollRef', lastScrollRef.current); } catch (e) {}
+          return { scrollPosition: lastScrollRef.current.scrollPosition || 0, scrollTarget: lastScrollRef.current.scrollTarget || 'window' };
+        }
+        const container = document.querySelector('.resumes-scroll') as HTMLElement | null;
+        const winY = window.scrollY || 0;
+        if (winY && winY > 0) {
+          try { console.log('[resumes] detectScrollInfo: window.scrollY', winY); } catch (e) {}
+          return { scrollPosition: winY, scrollTarget: 'window' };
+        }
+        let node: HTMLElement | null = container;
+        while (node) {
+          try {
+            const style = window.getComputedStyle(node);
+            const canScroll = (node.scrollHeight || 0) > (node.clientHeight || 0) && /(auto|scroll)/.test(style.overflowY || '');
+            if (canScroll) {
+              if (node.tagName === 'MAIN') return { scrollPosition: node.scrollTop || 0, scrollTarget: 'main' };
+              if (node.classList && node.classList.contains('resumes-scroll')) return { scrollPosition: node.scrollTop || 0, scrollTarget: '.resumes-scroll' };
+              return { scrollPosition: node.scrollTop || 0, scrollTarget: 'window' };
+            }
+          } catch (e) {}
+          node = node.parentElement;
+        }
+        const docEl = document.scrollingElement as HTMLElement | null;
+        if (docEl) return { scrollPosition: docEl.scrollTop || 0, scrollTarget: 'window' };
+        return { scrollPosition: 0, scrollTarget: 'window' };
+      } catch (e) {
+        return { scrollPosition: 0, scrollTarget: 'window' };
+      }
+    };
+    const { scrollPosition, scrollTarget } = detectScrollInfo();
+    try {
+      const docEl = document.scrollingElement as HTMLElement | null;
+      const mainEl = document.querySelector('main') as HTMLElement | null;
+      const resumesEl = document.querySelector('.resumes-scroll') as HTMLElement | null;
+      console.log('[resumes] detected scroll info before save', { currentPage, scrollPosition, scrollTarget });
+      console.log('[resumes] rawScrollStatus', {
+        windowScrollY: window.scrollY,
+        docScrollTop: docEl ? docEl.scrollTop : null,
+        mainScrollTop: mainEl ? mainEl.scrollTop : null,
+        resumesScrollTop: resumesEl ? resumesEl.scrollTop : null,
+        resumesScrollClientHeight: resumesEl ? resumesEl.clientHeight : null,
+        resumesScrollScrollHeight: resumesEl ? resumesEl.scrollHeight : null,
+        lastScrollRef: lastScrollRef.current
+      });
+    } catch (e) {}
     saveResumeListState({
       currentPage,
       filters,
-      selectedIds
+      selectedIds,
+      scrollPosition,
+      scrollTarget
     });
   }, [currentPage, filters, selectedIds]);
+
+  // 在挂载时恢复滚动位置（如果存在）
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (savedState && typeof savedState.scrollPosition === 'number') {
+      // wait for the resumes list container to render then restore
+      // restore according to saved target
+      try { console.log('[resumes] initial mount restore attempt', savedState); } catch (e) {}
+      if (savedState.scrollTarget === 'window') {
+        try { window.scrollTo({ top: savedState.scrollPosition || 0 }); } catch (e) {}
+        try { console.log('[resumes] after window.scrollTo', { windowScrollY: window.scrollY }); } catch (e) {}
+      } else {
+        waitForElement(savedState.scrollTarget || '.resumes-scroll', 2000).then((scrollEl) => {
+          if (scrollEl) {
+            try { (scrollEl as HTMLElement).scrollTo({ top: savedState.scrollPosition || 0 }); } catch (e) {}
+            try { console.log('[resumes] after element.scrollTo', { tag: (scrollEl as HTMLElement).tagName, className: (scrollEl as HTMLElement).className, scrollTop: (scrollEl as HTMLElement).scrollTop, scrollHeight: (scrollEl as HTMLElement).scrollHeight, clientHeight: (scrollEl as HTMLElement).clientHeight, windowScrollY: window.scrollY }); } catch (e) {}
+          }
+        });
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // also restore on popstate/pageshow so browser back and bfcache work reliably
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const restore = () => {
+      try {
+        console.log('[resumes] popstate/pageshow restore triggered');
+        const s = loadResumeListState();
+        console.log('[resumes] loaded snapshot', s);
+        if (!s) return;
+        if (typeof s.currentPage === 'number') setCurrentPage(s.currentPage);
+        if (s.filters) setFilters(s.filters as any);
+        if (s.selectedIds) setSelectedIds(s.selectedIds as string[]);
+        try {
+          if (s.scrollTarget === 'window') {
+            try { window.scrollTo({ top: s.scrollPosition || 0 }); } catch (e) {}
+          } else if (s.scrollTarget === 'main') {
+            waitForElement('main', 2000).then((el) => { if (el && typeof s.scrollPosition === 'number') try { el.scrollTo({ top: s.scrollPosition || 0 }); } catch (e) {} });
+          } else {
+            waitForElement(s.scrollTarget || '.resumes-scroll', 2000).then((scrollEl) => {
+              if (scrollEl && typeof s.scrollPosition === 'number') try { scrollEl.scrollTo({ top: s.scrollPosition || 0 }); } catch (e) {}
+            });
+          }
+        } catch (e) {}
+      } catch (e) {
+        // ignore
+      }
+    };
+
+    window.addEventListener('popstate', restore);
+    window.addEventListener('pageshow', restore);
+    return () => {
+      window.removeEventListener('popstate', restore);
+      window.removeEventListener('pageshow', restore);
+    };
+  }, []);
+
+  // restore when navigated back via query params (e.g., ResumeDetail pushes back with ?from=resumes&page=...)
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const sp = new URLSearchParams(window.location.search || '');
+      const from = sp.get('from');
+      if (from === 'resumes') {
+        const p = Number(sp.get('page') || currentPage);
+        if (!isNaN(p)) setCurrentPage(p);
+        returningFromRef.current = true;
+        const cached = loadResumeListState();
+        const doRestore = async () => {
+          try {
+            if (cached && typeof cached.scrollPosition === 'number' && cached.scrollTarget) {
+              try { console.log('[resumes] URL-return detected, restoring cached scrollTarget', cached.scrollTarget, cached.scrollPosition); } catch (e) {}
+              if (cached.scrollTarget === 'main') {
+                const el = await waitForElement('main', 7000);
+                if (el) { try { el.scrollTo({ top: cached.scrollPosition || 0 }); } catch (e) {} ; return; }
+              } else if (cached.scrollTarget === '.resumes-scroll') {
+                const el = await waitForElement('.resumes-scroll', 7000);
+                if (el) { try { el.scrollTo({ top: cached.scrollPosition || 0 }); } catch (e) {} ; return; }
+              } else if (cached.scrollTarget === 'window') {
+                try { window.scrollTo({ top: cached.scrollPosition || 0 }); } catch (e) {}
+                return;
+              }
+            }
+            const elFallback = await waitForElement('.resumes-scroll', 7000);
+            if (elFallback) {
+              const bottom = (elFallback.scrollHeight || 0) - (elFallback.clientHeight || 0);
+              try { elFallback.scrollTo({ top: bottom || 0 }); } catch (e) {}
+              try { console.log('[resumes] fallback scroll applied', { tag: (elFallback as HTMLElement).tagName, className: (elFallback as HTMLElement).className, scrollTop: (elFallback as HTMLElement).scrollTop, scrollHeight: (elFallback as HTMLElement).scrollHeight, clientHeight: (elFallback as HTMLElement).clientHeight, windowScrollY: window.scrollY }); } catch (e) {}
+            } else {
+              try { window.scrollTo({ top: document.body.scrollHeight || 0 }); } catch (e) {}
+              try { console.log('[resumes] fallback window scroll applied', { windowScrollY: window.scrollY }); } catch (e) {}
+            }
+          } catch (e) {}
+        };
+        void doRestore();
+        setTimeout(() => { void doRestore(); }, 500);
+        setTimeout(() => { void doRestore(); }, 1500);
+        setTimeout(() => { void doRestore(); }, 3000);
+        setTimeout(() => { void doRestore(); }, 5000);
+        try { router.replace('/resumes'); } catch (e) {}
+        setTimeout(() => { try { returningFromRef.current = false; } catch (e) {} }, 5500);
+      }
+    } catch (e) {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Fetch candidates from Supabase
   useEffect(() => {
@@ -62,8 +291,8 @@ export default function ResumesPage() {
           const edus = item.candidate_educations || [];
           const mainEdu = edus.length > 0 ? edus[0] : null;
 
-          const candidateTags = (item.candidate_tags || []).map((t: any) => ({
-            id: t.tags?.id || 0,
+          const candidateTags = (item.candidate_tags || []).map((t: any, idx: number) => ({
+            id: t.tags?.id ?? `${t.tags?.tag_name || ''}-${idx}`,
             tag_name: t.tags?.tag_name || '',
             category: t.tags?.category || ''
           })).filter((t: any) => t.tag_name);
@@ -333,9 +562,39 @@ export default function ResumesPage() {
   };
 
   const handleCandidateClick = (id: string) => {
-    const url = `/resumes/${id}`;
-    const w = window.open(url, '_blank', 'noopener,noreferrer');
-    if (w) w.opener = null;
+    // 在打开详情页前保存当前滚动位置，便于从详情页回退时恢复
+    const detectScrollInfo = () => {
+      try {
+        if (typeof window === 'undefined') return { scrollPosition: 0, scrollTarget: 'window' };
+        const container = document.querySelector('.resumes-scroll') as HTMLElement | null;
+        const winY = window.scrollY || 0;
+        if (winY && winY > 0) return { scrollPosition: winY, scrollTarget: 'window' };
+        let node: HTMLElement | null = container;
+        while (node) {
+          try {
+            const style = window.getComputedStyle(node);
+            const canScroll = (node.scrollHeight || 0) > (node.clientHeight || 0) && /(auto|scroll)/.test(style.overflowY || '');
+            if (canScroll) {
+              if (node.tagName === 'MAIN') return { scrollPosition: node.scrollTop || 0, scrollTarget: 'main' };
+              if (node.classList && node.classList.contains('resumes-scroll')) return { scrollPosition: node.scrollTop || 0, scrollTarget: '.resumes-scroll' };
+              return { scrollPosition: node.scrollTop || 0, scrollTarget: 'window' };
+            }
+          } catch (e) {}
+          node = node.parentElement;
+        }
+        const docEl = document.scrollingElement as HTMLElement | null;
+        if (docEl) return { scrollPosition: docEl.scrollTop || 0, scrollTarget: 'window' };
+        return { scrollPosition: 0, scrollTarget: 'window' };
+      } catch (e) {
+        return { scrollPosition: 0, scrollTarget: 'window' };
+      }
+    };
+    const { scrollPosition, scrollTarget } = detectScrollInfo();
+    saveResumeListState({ currentPage, filters, selectedIds, scrollPosition, scrollTarget });
+
+    // navigate in the same tab instead of opening a new window; include from so detail can return explicitly
+    const url = `/resumes/${id}?from=resumes&page=${encodeURIComponent(String(currentPage))}`;
+    router.push(url);
   };
 
   return (

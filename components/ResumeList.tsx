@@ -114,7 +114,7 @@ export const ResumeList: React.FC<ResumeListProps> = ({
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
+      <div className="flex-1 overflow-y-auto p-6 custom-scrollbar resumes-scroll">
         {candidates.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-gray-400">
             <User size={64} className="mb-4 text-gray-300" />
@@ -152,16 +152,16 @@ export const ResumeList: React.FC<ResumeListProps> = ({
                     <Building2 size={14} className="text-gray-500" />
                     <span className="text-sm font-medium text-gray-800">{c.company}</span>
                     {c.is_outsourcing && <span className="text-[10px] bg-pink-100 text-pink-600 px-1.5 py-0.5 rounded border border-pink-200">外包</span>}
-                    {c.company_tags.map(tag => <span key={tag} className="text-[10px] bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded border border-blue-200">{tag}</span>)}
+                    {c.company_tags.map((tag, idx) => <span key={`${tag}-${idx}`} className="text-[10px] bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded border border-blue-200">{tag}</span>)}
                   </div>
                   <div className="flex flex-wrap items-center gap-1">
-                    {c.school.tags.map(t => <Tag key={t} text={t} type="school" size="xs" />)}
+                    {c.school.tags.map((t, idx) => <Tag key={`${t}-${idx}`} text={t} type="school" size="xs" />)}
                     {/* AI 打标标签 */}
-                    {c.tags?.map((tag: CandidateTag) => {
+                    {c.tags?.map((tag: CandidateTag, idx: number) => {
                       const colors = getTagColor(tag.category);
                       return (
                         <span
-                          key={tag.id}
+                          key={`${tag.id}-${idx}`}
                           className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium border ${colors.bg} ${colors.text} ${colors.border}`}
                           title={tag.category}
                         >
