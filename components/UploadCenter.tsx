@@ -20,6 +20,7 @@ export const UploadCenter: React.FC<UploadCenterProps> = ({ onViewClick }) => {
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [retryingId, setRetryingId] = useState<string | null>(null); // 正在重试的记录ID
+  const [infoMessage, setInfoMessage] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const searchParams = useSearchParams();
   const requestedUserParam = searchParams?.get('userId') || user?.id || null;
@@ -166,6 +167,11 @@ export const UploadCenter: React.FC<UploadCenterProps> = ({ onViewClick }) => {
     setUploading(true);
     const files = Array.from(e.target.files);
 
+    let successCount = 0;
+    let failCount = 0;
+    let skipCount = 0;
+    const errorDetails: string[] = [];
+
     for (const file of files) {
       try {
         // 1. Calculate Hash
@@ -185,6 +191,8 @@ export const UploadCenter: React.FC<UploadCenterProps> = ({ onViewClick }) => {
 
         if (existing) {
           console.log(`File ${file.name} already exists.`);
+          skipCount += 1;
+          try { errorDetails.push(`${file.name}: 已存在`); } catch (e) {}
           continue; // Skip or notify user
         }
 
@@ -215,11 +223,22 @@ export const UploadCenter: React.FC<UploadCenterProps> = ({ onViewClick }) => {
           });
 
         if (dbError) throw dbError;
+        successCount += 1;
 
-      } catch (err) {
+        } catch (err: any) {
         console.error(`Error uploading ${file.name}:`, err);
-        alert(`上传 ${file.name} 失败`);
+        failCount += 1;
+        try { errorDetails.push(`${file.name}: ${err?.message || String(err)}`); } catch (e) { errorDetails.push(`${file.name}: 上传失败`); }
       }
+    }
+
+    // set summary message including skipped duplicates
+    if (successCount > 0 || failCount > 0 || skipCount > 0) {
+      const parts = [] as string[];
+      if (successCount > 0) parts.push(`${successCount} 成功`);
+      if (failCount > 0) parts.push(`${failCount} 失败`);
+      if (skipCount > 0) parts.push(`${skipCount} 已存在`);
+      setInfoMessage(`上传完成：${parts.join('，')}`);
     }
 
     setUploading(false);
@@ -284,6 +303,13 @@ export const UploadCenter: React.FC<UploadCenterProps> = ({ onViewClick }) => {
         <h2 className="text-2xl font-bold text-gray-900">上传中心</h2>
         <p className="text-gray-500 mt-1">支持批量 PDF/Word 简历上传，AI 自动解析</p>
       </div>
+
+      {infoMessage && (
+        <div className="mb-4 p-3 rounded-lg bg-indigo-50 border border-indigo-100 text-sm text-indigo-700 flex items-center justify-between">
+          <div>{infoMessage}</div>
+          <button onClick={() => setInfoMessage(null)} className="text-indigo-700 text-sm font-medium">关闭</button>
+        </div>
+      )}
 
       <input 
         type="file" 

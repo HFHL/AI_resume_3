@@ -14,6 +14,7 @@ interface RecentUpload {
   filename: string;
   userName: string;
   status: string;
+  error?: string | null;
   createdAt: string;
   ossRawPath?: string | null;
 }
@@ -45,6 +46,7 @@ export const UserProcessingStats: React.FC = () => {
   const [recentDisplayLimit, setRecentDisplayLimit] = useState<number>(1000);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [filenameQuery, setFilenameQuery] = useState<string>('');
   const [loadProgress, setLoadProgress] = useState(0);
   const [totalCount, setTotalCount] = useState(0);
   const [page, setPage] = useState(1);
@@ -103,7 +105,7 @@ export const UserProcessingStats: React.FC = () => {
       // fetch recent rows for table (first page/chunk)
       const { data: rows, error: rowsErr } = await supabase
         .from('resume_uploads')
-        .select('id,filename,status,created_at,oss_raw_path,candidates(id),uploader_name,uploader_email')
+        .select('id,filename,status,error_reason,created_at,oss_raw_path,candidates(id),uploader_name,uploader_email')
         .eq('user_id', user.id)
         .order('created_at', { ascending: false })
         .range(0, Math.min(999, totalNum - 1));
@@ -115,6 +117,7 @@ export const UserProcessingStats: React.FC = () => {
         filename: r.filename || '未命名文件',
         userName: displayName || r.uploader_name || r.uploader_email || '我',
         status: mapStatus(r.status),
+        error: r.error_reason || null,
         createdAt: r.created_at,
         ossRawPath: r.oss_raw_path || null
       } as RecentUpload));
@@ -273,13 +276,20 @@ export const UserProcessingStats: React.FC = () => {
     const weekStart = new Date(todayStart.getTime() - 7 * 24 * 60 * 60 * 1000);
     const filtered = recentAll.filter((item) => {
       const created = new Date(item.createdAt);
-      if (filterMode === 'today') return created >= todayStart;
-      if (filterMode === 'week') return created >= weekStart;
+      if (filterMode === 'today' && !(created >= todayStart)) return false;
+      if (filterMode === 'week' && !(created >= weekStart)) return false;
+      if (filenameQuery && filenameQuery.trim().length > 0) {
+        try {
+          if (!item.filename.toLowerCase().includes(filenameQuery.trim().toLowerCase())) return false;
+        } catch (e) {
+          return false;
+        }
+      }
       return true;
     });
     filtered.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
     return filtered;
-  }, [recentAll, filterMode]);
+  }, [recentAll, filterMode, filenameQuery]);
 
   const totalPages = Math.max(0, Math.ceil(filteredRecent.length / pageSize));
 
@@ -435,6 +445,15 @@ export const UserProcessingStats: React.FC = () => {
               onClick={() => { console.log('[UserProcessingStats] filter=all clicked'); setFilterMode('all'); }}
               className={`px-3 py-1 rounded-md text-sm font-medium border ${filterMode === 'all' ? 'bg-indigo-700 text-white border-indigo-700' : 'text-gray-700 border-gray-200 hover:bg-gray-50'}`}
             >全部</button>
+            <div className="ml-4">
+              <input
+                type="text"
+                placeholder="搜索文件名"
+                value={filenameQuery}
+                onChange={(e) => setFilenameQuery(e.target.value)}
+                className="px-3 py-1 rounded-md border border-gray-200 text-sm"
+              />
+            </div>
           </div>
         </div>
         <div className="overflow-auto user-processing-scroll">
@@ -444,6 +463,7 @@ export const UserProcessingStats: React.FC = () => {
                 <th className="px-6 py-3 font-medium">文件名</th>
                 <th className="px-6 py-3 font-medium">上传时间</th>
                 <th className="px-6 py-3 font-medium">状态</th>
+                <th className="px-6 py-3 font-medium">错误信息</th>
                 <th className="px-6 py-3 font-medium">重新解析</th>
                 <th className="px-6 py-3 font-medium">操作</th>
               </tr>
@@ -452,16 +472,16 @@ export const UserProcessingStats: React.FC = () => {
               {(() => {
                 if (!filteredRecent || filteredRecent.length === 0) return (
                   <tr>
-                    <td colSpan={5} className="px-6 py-8 text-center text-gray-400">暂无上传数据</td>
+                    <td colSpan={6} className="px-6 py-8 text-center text-gray-400">暂无上传数据</td>
                   </tr>
                 );
 
                 const loaded = filteredRecent.slice(0, recentDisplayLimit);
-                if (loaded.length === 0) return (
-                  <tr>
-                    <td colSpan={5} className="px-6 py-8 text-center text-gray-400">暂无上传数据</td>
-                  </tr>
-                );
+                  if (loaded.length === 0) return (
+                    <tr>
+                      <td colSpan={6} className="px-6 py-8 text-center text-gray-400">暂无上传数据</td>
+                    </tr>
+                  );
 
                 const start = (page - 1) * pageSize;
                 const pageItems = loaded.slice(start, start + pageSize);
@@ -474,6 +494,9 @@ export const UserProcessingStats: React.FC = () => {
                       {item.status === 'success' && <span className="text-green-700">成功</span>}
                       {item.status === 'failed' && <span className="text-red-600 flex items-center gap-1"><AlertCircle size={14} /> 失败</span>}
                       {item.status === 'processing' && <span className="text-amber-700">处理中</span>}
+                    </td>
+                    <td className="px-6 py-4 text-red-600 truncate max-w-[280px]" title={(item as any).error || ''}>
+                      {item.status === 'failed' ? ((item as any).error || '-') : '-'}
                     </td>
                     <td className="px-6 py-4 text-center">
                       <button
@@ -551,7 +574,7 @@ export const UserProcessingStats: React.FC = () => {
                   const end = Math.min(totalCount - 1, start + chunk - 1);
                   const { data: moreData, error: moreErr } = await supabase
                     .from('resume_uploads')
-                    .select('id,filename,status,created_at,oss_raw_path,candidates(id),uploader_name,uploader_email')
+                    .select('id,filename,status,error_reason,created_at,oss_raw_path,candidates(id),uploader_name,uploader_email')
                     .eq('user_id', user?.id)
                     .order('created_at', { ascending: false })
                     .range(start, end);
@@ -563,6 +586,7 @@ export const UserProcessingStats: React.FC = () => {
                     filename: row.filename || '未命名文件',
                     userName: displayName || row.uploader_name || row.uploader_email || '我',
                     status: mapStatus(row.status),
+                    error: row.error_reason || null,
                     createdAt: row.created_at,
                     ossRawPath: row.oss_raw_path || null
                   }));
