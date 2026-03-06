@@ -265,8 +265,23 @@ export const ProcessingStats: React.FC = () => {
       });
       // use aggregated user stats computed above (userMap)
       setUserStats(sortedUsers);
-      setRecentAll(recent as RecentUpload[]);
-      setRecentUploads(recent.slice(0, 20) as RecentUpload[]);
+      // merge with any existing loaded items to avoid overwriting items
+      // appended by "加载更多" when a concurrent fetchStats runs
+      setRecentAll((prev) => {
+        try {
+          const map = new Map<string, RecentUpload>();
+          (prev || []).forEach((p) => map.set(p.uploadId, p));
+          (recent || []).forEach((r) => map.set(r.uploadId, r));
+          const merged = Array.from(map.values());
+          merged.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+          // also update the short display list
+          try { setRecentUploads(merged.slice(0, 20)); } catch (e) {}
+          return merged;
+        } catch (e) {
+          try { setRecentUploads(recent.slice(0, 20) as RecentUpload[]); } catch (e) {}
+          return recent as RecentUpload[];
+        }
+      });
       // persist profile map for later incremental loads
       setProfileMapState(profileMap);
 
@@ -912,6 +927,11 @@ export const ProcessingStats: React.FC = () => {
                         onClick={async (e) => {
                           e.stopPropagation();
                           if (!confirm('确定要重新解析此上传记录吗？这会重新执行 OCR 识别和 AI 结构化解析。')) return;
+                          // optimistic UI update: mark this item as processing so user sees immediate feedback
+                          try {
+                            setRecentAll((prev) => (prev || []).map(r => r.uploadId === item.uploadId ? { ...r, status: 'processing' } : r));
+                            setRecentUploads((prev) => (prev || []).map(r => r.uploadId === item.uploadId ? { ...r, status: 'processing' } : r));
+                          } catch (e) {}
                           // set per-row loading flag
                           setLoadingIds((s) => ({ ...s, [item.uploadId]: true }));
                           try {
